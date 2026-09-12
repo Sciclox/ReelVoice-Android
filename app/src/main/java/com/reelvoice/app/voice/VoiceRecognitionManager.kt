@@ -31,7 +31,7 @@ class VoiceRecognitionManager(
 
     companion object {
         private const val TAG = "VoiceRecognitionMgr"
-        private const val COMMAND_COOLDOWN_MS = 550L // Cooldown ágil para navegación rápida
+        private const val COMMAND_COOLDOWN_MS = 1200L // 1.2s para evitar dobles saltos y permitir transiciones suaves
     }
 
     var requireWakeWord: Boolean = true
@@ -42,6 +42,7 @@ class VoiceRecognitionManager(
     private var isRunning = false
     private var isPausedByUser = false
     private var lastCommandTimestamp = 0L
+    private var isCommandExecutedInCurrentSession = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -142,10 +143,12 @@ class VoiceRecognitionManager(
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 Log.d(TAG, "Listo para escuchar")
+                isCommandExecutedInCurrentSession = false
             }
 
             override fun onBeginningOfSpeech() {
                 Log.d(TAG, "Voz detectada")
+                isCommandExecutedInCurrentSession = false
             }
 
             override fun onRmsChanged(rmsdB: Float) {}
@@ -158,12 +161,14 @@ class VoiceRecognitionManager(
 
             override fun onError(error: Int) {
                 Log.d(TAG, "Código de evento del recognizer: $error")
+                isCommandExecutedInCurrentSession = false
                 // Códigos normales de timeout o no-match reinician la escucha en bucle
                 scheduleRestart(250)
             }
 
             override fun onResults(results: Bundle?) {
                 processMatches(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
+                isCommandExecutedInCurrentSession = false
                 scheduleRestart(150)
             }
 
@@ -178,9 +183,14 @@ class VoiceRecognitionManager(
     private fun processMatches(matches: ArrayList<String>?) {
         if (matches.isNullOrEmpty()) return
 
+        // Si ya se ejecutó un comando en esta frase hablada (ej: en partialResults), no volver a disparar en onResults
+        if (isCommandExecutedInCurrentSession) {
+            return
+        }
+
         val now = System.currentTimeMillis()
         if (now - lastCommandTimestamp < COMMAND_COOLDOWN_MS) {
-            return // Evita comandos repetidos por partial + final results
+            return // Evita comandos repetidos dentro de la ventana de cooldown
         }
 
         for (phrase in matches) {
@@ -190,6 +200,7 @@ class VoiceRecognitionManager(
             val command = parseCommand(normalized)
             if (command != VoiceCommand.UNKNOWN) {
                 lastCommandTimestamp = now
+                isCommandExecutedInCurrentSession = true
                 onCommandDetected(command)
                 break
             }

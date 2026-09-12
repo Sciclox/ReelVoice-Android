@@ -55,6 +55,7 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
 
     /**
      * Simula un deslizamiento hacia arriba (Swipe Up) para pasar al siguiente Reel.
+     * Calibrado a 280ms y 44% de pantalla para evitar sobre-inercia (doble salto en ViewPager).
      */
     fun scrollNext(): Boolean {
         val metrics = resources.displayMetrics
@@ -62,11 +63,11 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         val height = metrics.heightPixels.toFloat()
 
         val startX = width * 0.5f
-        val startY = height * 0.75f
+        val startY = height * 0.72f
         val endX = width * 0.5f
-        val endY = height * 0.20f
+        val endY = height * 0.28f
 
-        return performSwipe(startX, startY, endX, endY, duration = 200)
+        return performSwipe(startX, startY, endX, endY, duration = 280)
     }
 
     /**
@@ -81,9 +82,9 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         val startX = width * 0.5f
         val startY = height * 0.35f
         val endX = width * 0.5f
-        val endY = height * 0.85f
+        val endY = height * 0.79f
 
-        return performSwipe(startX, startY, endX, endY, duration = 200)
+        return performSwipe(startX, startY, endX, endY, duration = 280)
     }
 
     /**
