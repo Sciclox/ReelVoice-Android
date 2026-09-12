@@ -49,13 +49,44 @@ class VoiceRecognitionManager(
 
     private val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        val defaultLocale = Locale.getDefault().toLanguageTag()
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, defaultLocale)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, defaultLocale)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-419")
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "es-419")
+        putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("es-419", "es-ES", "es-US", "es-MX", "es-PE", "es-CO", "es-AR"))
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
         putExtra("android.speech.extra.DICTATION_MODE", true)
+        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+    }
+
+    private fun setupBluetoothSco(enable: Boolean) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (enable) {
+                if (audioManager.isBluetoothScoAvailableOffCall) {
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                    Log.i(TAG, "Bluetooth SCO activado para audífonos inalámbricos")
+                }
+            } else {
+                if (audioManager.isBluetoothScoOn) {
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.stopBluetoothSco()
+                    Log.i(TAG, "Bluetooth SCO detenido")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Excepción al configurar Bluetooth SCO: ${e.message}")
+        }
+    }
+
+    private fun configureSpeakerphone(enable: Boolean) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            audioManager.isSpeakerphoneOn = enable
+        } catch (e: Exception) {
+            Log.w(TAG, "Excepción al configurar altavoz: ${e.message}")
+        }
     }
 
     private fun muteSystemSounds(mute: Boolean) {
@@ -81,6 +112,9 @@ class VoiceRecognitionManager(
         isRunning = true
         isPausedByUser = false
 
+        setupBluetoothSco(true)
+        configureSpeakerphone(true)
+
         mainHandler.post {
             initAndStartRecognizer()
         }
@@ -88,6 +122,8 @@ class VoiceRecognitionManager(
 
     fun pauseListening() {
         isPausedByUser = true
+        setupBluetoothSco(false)
+        configureSpeakerphone(false)
         stopInternal()
         muteSystemSounds(false)
         onStatusChanged(false, "Micrófono en pausa")
@@ -98,6 +134,8 @@ class VoiceRecognitionManager(
             startListening()
         } else {
             isPausedByUser = false
+            setupBluetoothSco(true)
+            configureSpeakerphone(true)
             mainHandler.post {
                 initAndStartRecognizer()
             }
@@ -107,6 +145,8 @@ class VoiceRecognitionManager(
     fun stopListening() {
         isRunning = false
         isPausedByUser = false
+        setupBluetoothSco(false)
+        configureSpeakerphone(false)
         mainHandler.post {
             stopInternal()
             muteSystemSounds(false)
@@ -255,8 +295,10 @@ class VoiceRecognitionManager(
 
         val hasWakeWord = if (wakeTarget.isNotBlank()) {
             text.contains(wakeTarget) ||
-            (wakeTarget == "reel" && text.contains("ril")) ||
-            (wakeTarget == "tiktok" && (text.contains("tik tok") || text.contains("tictoc"))) ||
+            (wakeTarget == "reel" && (text.contains("ril") || text.contains("riel") || text.contains("rin"))) ||
+            (wakeTarget == "tiktok" && (text.contains("tik tok") || text.contains("tictoc") || text.contains("titoc"))) ||
+            (wakeTarget == "oye" && (text.contains("oie") || text.contains("olle") || text.contains("ole") || text.contains("hey"))) ||
+            (wakeTarget == "video" && (text.contains("bideo") || text.contains("vido"))) ||
             text.contains("oye $wakeTarget") ||
             text.contains("hey $wakeTarget") ||
             text.contains("ok $wakeTarget")
@@ -274,21 +316,21 @@ class VoiceRecognitionManager(
 
         val words = text.split(" ").filter { it.isNotBlank() }
 
-        // 1. Detección rápida por palabras individuales
+        // 1. Detección rápida por palabras individuales (incluye variantes fonéticas a distancia)
         for (w in words) {
             if (w == wakeTarget || (wakeTarget == "reel" && w == "ril")) continue // Ignorar la palabra clave
 
             when (w) {
                 // Siguiente
-                "baja", "bajar", "baje", "sig", "siguiente", "next", "otro", "otra", "pasa", "pasar",
-                "cambia", "cambiar", "dale", "abajo", "avanza" -> {
+                "baja", "bajar", "baje", "bajo", "vaja", "vaya", "aja", "baha", "maja", "sig",
+                "siguiente", "next", "otro", "otra", "pasa", "pasar", "cambia", "cambiar", "dale", "abajo", "avanza" -> {
                     wakeWordWindowUntil = 0L
                     return VoiceCommand.NEXT
                 }
 
                 // Anterior
-                "sube", "subir", "suba", "atras", "anterior", "arriba", "regresa", "regresar",
-                "retrocede", "retroceder", "vuelve", "volver", "back", "ant" -> {
+                "sube", "subir", "suba", "suve", "tube", "supe", "shube", "sub", "atras",
+                "anterior", "arriba", "regresa", "regresar", "retrocede", "retroceder", "vuelve", "volver", "back", "ant" -> {
                     wakeWordWindowUntil = 0L
                     return VoiceCommand.PREVIOUS
                 }
