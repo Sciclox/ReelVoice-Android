@@ -5,18 +5,24 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.reelvoice.app.R
 import com.reelvoice.app.service.ReelVoiceForegroundService
 import com.reelvoice.app.voice.VoiceCommand
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
  * Servicio que administra el botón/burbuja flotante magnética
@@ -46,6 +52,13 @@ class FloatingBubbleService : Service() {
     private var bubbleView: View? = null
     private lateinit var layoutParams: WindowManager.LayoutParams
 
+    private var dismissView: View? = null
+    private lateinit var dismissLayoutParams: WindowManager.LayoutParams
+    private var isOverDismissArea = false
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var autoDimRunnable: Runnable? = null
+
     private var isMicActive = true
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -54,6 +67,7 @@ class FloatingBubbleService : Service() {
         super.onCreate()
         instance = this
         initFloatingBubble()
+        scheduleAutoDim()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -76,6 +90,7 @@ class FloatingBubbleService : Service() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val inflater = LayoutInflater.from(this)
         bubbleView = inflater.inflate(R.layout.floating_bubble, null)
+        dismissView = inflater.inflate(R.layout.floating_dismiss_area, null)
 
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -97,10 +112,29 @@ class FloatingBubbleService : Service() {
             y = 350
         }
 
+        dismissLayoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            layoutType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = 120
+        }
+
         setupBubbleTouchInteractions()
 
         try {
             windowManager?.addView(bubbleView, layoutParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            dismissView?.visibility = View.GONE
+            windowManager?.addView(dismissView, dismissLayoutParams)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -119,11 +153,15 @@ class FloatingBubbleService : Service() {
             override fun onTouch(v: View?, event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
+                        cancelAutoDim()
+                        bubbleView?.animate()?.alpha(1.0f)?.setDuration(120)?.start()
+
                         initialX = layoutParams.x
                         initialY = layoutParams.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         isClick = true
+                        isOverDismissArea = false
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -132,25 +170,96 @@ class FloatingBubbleService : Service() {
 
                         if (abs(deltaX) > 10 || abs(deltaY) > 10) {
                             isClick = false
+                            if (dismissView?.visibility != View.VISIBLE) {
+                                dismissView?.visibility = View.VISIBLE
+                                dismissView?.alpha = 0f
+                                dismissView?.animate()?.alpha(1f)?.setDuration(150)?.start()
+                            }
                         }
 
                         layoutParams.x = initialX + deltaX
                         layoutParams.y = initialY + deltaY
                         windowManager?.updateViewLayout(bubbleView, layoutParams)
+
+                        // Detección de proximidad a la zona de descarte inferior [X]
+                        checkDismissProximity()
                         return true
                     }
                     MotionEvent.ACTION_UP -> {
+                        // Ocultar zona de descarte
+                        dismissView?.animate()?.alpha(0f)?.setDuration(150)?.withEndAction {
+                            dismissView?.visibility = View.GONE
+                        }?.start()
+
+                        if (isOverDismissArea) {
+                            // Usuario soltó la burbuja en la X: ocultar solo la burbuja
+                            triggerHaptic(50)
+                            Toast.makeText(applicationContext, "Burbuja oculta. El control de voz sigue activo.", Toast.LENGTH_SHORT).show()
+                            stopSelf()
+                            return true
+                        }
+
                         if (isClick) {
                             toggleMicrophoneState()
                         } else {
                             snapToNearestEdge()
                         }
+                        scheduleAutoDim()
                         return true
                     }
                 }
                 return false
             }
         })
+    }
+
+    private fun checkDismissProximity() {
+        val metrics = resources.displayMetrics
+        val screenWidth = metrics.widthPixels
+        val screenHeight = metrics.heightPixels
+
+        val dismissCenterX = screenWidth / 2
+        val dismissCenterY = screenHeight - 160
+
+        val bubbleCenterX = layoutParams.x + 60
+        val bubbleCenterY = layoutParams.y + 60
+
+        val dist = hypot((bubbleCenterX - dismissCenterX).toDouble(), (bubbleCenterY - dismissCenterY).toDouble())
+        val wasOver = isOverDismissArea
+        isOverDismissArea = dist < 220.0
+
+        val dismissCircle = dismissView?.findViewById<View>(R.id.dismissCircle)
+        if (isOverDismissArea && !wasOver) {
+            dismissCircle?.animate()?.scaleX(1.25f)?.scaleY(1.25f)?.setDuration(120)?.start()
+            triggerHaptic(30)
+        } else if (!isOverDismissArea && wasOver) {
+            dismissCircle?.animate()?.scaleX(1.0f)?.scaleY(1.0f)?.setDuration(120)?.start()
+        }
+    }
+
+    private fun scheduleAutoDim() {
+        cancelAutoDim()
+        autoDimRunnable = Runnable {
+            bubbleView?.animate()?.alpha(0.40f)?.setDuration(400)?.start()
+        }
+        mainHandler.postDelayed(autoDimRunnable!!, 3500)
+    }
+
+    private fun cancelAutoDim() {
+        autoDimRunnable?.let { mainHandler.removeCallbacks(it) }
+        autoDimRunnable = null
+    }
+
+    private fun triggerHaptic(durationMs: Long = 30) {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(durationMs)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun toggleMicrophoneState() {
@@ -188,6 +297,9 @@ class FloatingBubbleService : Service() {
     }
 
     private fun showCommandFeedback() {
+        cancelAutoDim()
+        bubbleView?.animate()?.alpha(1.0f)?.setDuration(80)?.start()
+
         val indicator = bubbleView?.findViewById<View>(R.id.indicatorDot)
         val container = bubbleView?.findViewById<View>(R.id.bubbleContainer)
 
@@ -202,7 +314,10 @@ class FloatingBubbleService : Service() {
                     ?.scaleY(1.0f)
                     ?.setDuration(120)
                     ?.start()
-                indicator?.postDelayed({ indicator.visibility = View.GONE }, 600)
+                indicator?.postDelayed({ 
+                    indicator.visibility = View.GONE
+                    scheduleAutoDim()
+                }, 600)
             }
             ?.start()
     }
@@ -217,6 +332,7 @@ class FloatingBubbleService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        cancelAutoDim()
         if (bubbleView != null) {
             try {
                 windowManager?.removeView(bubbleView)
@@ -224,6 +340,14 @@ class FloatingBubbleService : Service() {
                 e.printStackTrace()
             }
             bubbleView = null
+        }
+        if (dismissView != null) {
+            try {
+                windowManager?.removeView(dismissView)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            dismissView = null
         }
     }
 }

@@ -235,20 +235,77 @@ class VoiceRecognitionManager(
         return clean.replace(Regex("[^a-z0-9\\s]"), " ").trim()
     }
 
+    private fun calculateLevenshteinDistance(s1: String, s2: String): Int {
+        val m = s1.length
+        val n = s2.length
+        val dp = Array(m + 1) { IntArray(n + 1) }
+
+        for (i in 0..m) dp[i][0] = i
+        for (j in 0..n) dp[0][j] = j
+
+        for (i in 1..m) {
+            for (j in 1..n) {
+                val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
+                dp[i][j] = minOf(
+                    dp[i - 1][j] + 1,      // Eliminación
+                    dp[i][j - 1] + 1,      // Inserción
+                    dp[i - 1][j - 1] + cost // Sustitución
+                )
+            }
+        }
+        return dp[m][n]
+    }
+
+    private fun isFuzzyMatch(heardWord: String, target: String): Boolean {
+        if (heardWord == target) return true
+        if (target.length >= 3 && (heardWord.contains(target) || target.contains(heardWord))) return true
+
+        val maxAllowedDistance = when {
+            target.length <= 3 -> if (heardWord.length == target.length) 1 else 0
+            target.length <= 6 -> 1
+            else -> 2
+        }
+
+        return calculateLevenshteinDistance(heardWord, target) <= maxAllowedDistance
+    }
+
     private fun parseCommand(text: String): VoiceCommand {
         val now = System.currentTimeMillis()
         val wakeTarget = normalizeText(customWakeWord)
+        val words = text.split(" ").filter { it.isNotBlank() }
 
-        val hasWakeWord = if (wakeTarget.isNotBlank()) {
-            text.contains(wakeTarget) ||
-            (wakeTarget == "reel" && (text.contains("ril") || text.contains("riel") || text.contains("rin"))) ||
-            (wakeTarget == "tiktok" && (text.contains("tik tok") || text.contains("tictoc") || text.contains("titoc"))) ||
-            (wakeTarget == "oye" && (text.contains("oie") || text.contains("olle") || text.contains("ole") || text.contains("hey"))) ||
-            (wakeTarget == "video" && (text.contains("bideo") || text.contains("vido"))) ||
-            text.contains("oye $wakeTarget") ||
-            text.contains("hey $wakeTarget") ||
-            text.contains("ok $wakeTarget")
-        } else false
+        var hasWakeWord = false
+        if (wakeTarget.isNotBlank()) {
+            if (text.contains(wakeTarget) ||
+                (wakeTarget == "reel" && (text.contains("ril") || text.contains("riel") || text.contains("real") || text.contains("rin"))) ||
+                (wakeTarget == "tiktok" && (text.contains("tik tok") || text.contains("tictoc") || text.contains("titoc") || text.contains("tito"))) ||
+                (wakeTarget == "oye" && (text.contains("oie") || text.contains("olle") || text.contains("ole") || text.contains("hey"))) ||
+                (wakeTarget == "video" && (text.contains("bideo") || text.contains("vido"))) ||
+                text.contains("oye $wakeTarget") ||
+                text.contains("hey $wakeTarget") ||
+                text.contains("ok $wakeTarget")
+            ) {
+                hasWakeWord = true
+            } else {
+                // Coincidencia fonética difusa (Fuzzy matching) sobre palabras individuales
+                for (w in words) {
+                    if (isFuzzyMatch(w, wakeTarget)) {
+                        hasWakeWord = true
+                        break
+                    }
+                }
+                // Coincidencia sobre pares contiguos (ej: 'tik tok' para 'tiktok')
+                if (!hasWakeWord && words.size >= 2) {
+                    for (i in 0 until words.size - 1) {
+                        val joined = "${words[i]}${words[i + 1]}"
+                        if (joined == wakeTarget || isFuzzyMatch(joined, wakeTarget)) {
+                            hasWakeWord = true
+                            break
+                        }
+                    }
+                }
+            }
+        }
 
         if (hasWakeWord) {
             // Abre una ventana de escucha de 3.5 segundos si la palabra clave se dijo
@@ -260,11 +317,9 @@ class VoiceRecognitionManager(
             return VoiceCommand.UNKNOWN
         }
 
-        val words = text.split(" ").filter { it.isNotBlank() }
-
         // 1. Detección rápida por palabras individuales (incluye variantes fonéticas a distancia)
         for (w in words) {
-            if (w == wakeTarget || (wakeTarget == "reel" && w == "ril")) continue // Ignorar la palabra clave
+            if (isFuzzyMatch(w, wakeTarget) || (wakeTarget == "reel" && (w == "ril" || w == "riel" || w == "real"))) continue // Ignorar la palabra clave
 
             when (w) {
                 // Siguiente
