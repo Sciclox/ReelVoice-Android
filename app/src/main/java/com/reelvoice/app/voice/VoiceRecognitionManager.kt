@@ -35,6 +35,7 @@ class VoiceRecognitionManager(
     }
 
     var requireWakeWord: Boolean = true
+    var customWakeWord: String = "reel"
     private var wakeWordWindowUntil: Long = 0L
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -203,11 +204,16 @@ class VoiceRecognitionManager(
 
     private fun parseCommand(text: String): VoiceCommand {
         val now = System.currentTimeMillis()
-        val hasWakeWord = text.contains("reel") ||
-                text.contains("ril") ||
-                text.contains("oye reel") ||
-                text.contains("hey reel") ||
-                text.contains("ok reel")
+        val wakeTarget = normalizeText(customWakeWord)
+
+        val hasWakeWord = if (wakeTarget.isNotBlank()) {
+            text.contains(wakeTarget) ||
+            (wakeTarget == "reel" && text.contains("ril")) ||
+            (wakeTarget == "tiktok" && (text.contains("tik tok") || text.contains("tictoc"))) ||
+            text.contains("oye $wakeTarget") ||
+            text.contains("hey $wakeTarget") ||
+            text.contains("ok $wakeTarget")
+        } else false
 
         if (hasWakeWord) {
             // Abre una ventana de escucha de 3.5 segundos si la palabra clave se dijo
@@ -223,7 +229,7 @@ class VoiceRecognitionManager(
 
         // 1. Detección rápida por palabras individuales
         for (w in words) {
-            if (w == "reel" || w == "ril") continue // Ignorar la palabra clave
+            if (w == wakeTarget || (wakeTarget == "reel" && w == "ril")) continue // Ignorar la palabra clave
 
             when (w) {
                 // Siguiente

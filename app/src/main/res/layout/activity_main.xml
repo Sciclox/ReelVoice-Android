@@ -190,6 +190,125 @@
                     android:textSize="12sp"
                     android:textStyle="italic" />
 
+                <!-- Custom Wake Word Section -->
+                <LinearLayout
+                    android:id="@+id/layoutCustomWakeWord"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Palabra clave personalizada:"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="6dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilCustomWakeWord"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            app:boxStrokeColor="@color/neon_cyan"
+                            app:hintTextColor="@color/neon_cyan"
+                            app:boxCornerRadiusBottomEnd="10dp"
+                            app:boxCornerRadiusBottomStart="10dp"
+                            app:boxCornerRadiusTopEnd="10dp"
+                            app:boxCornerRadiusTopStart="10dp">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etCustomWakeWord"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="Ej: Reel, Tiktok, Oye"
+                                android:textColor="@color/text_primary"
+                                android:textSize="13sp"
+                                android:maxLines="1"
+                                android:inputType="text" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <Button
+                            android:id="@+id/btnSaveCustomWakeWord"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="48dp"
+                            android:layout_marginStart="8dp"
+                            android:text="Guardar"
+                            android:textColor="@color/neon_cyan"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <!-- Quick Preset Chips -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="8dp">
+
+                        <TextView
+                            android:id="@+id/chipReel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_card_rounded"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="5dp"
+                            android:text="Reel"
+                            android:textColor="@color/neon_cyan"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:layout_marginEnd="6dp" />
+
+                        <TextView
+                            android:id="@+id/chipTiktok"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_card_rounded"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="5dp"
+                            android:text="Tiktok"
+                            android:textColor="@color/neon_cyan"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:layout_marginEnd="6dp" />
+
+                        <TextView
+                            android:id="@+id/chipOye"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_card_rounded"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="5dp"
+                            android:text="Oye"
+                            android:textColor="@color/neon_cyan"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:layout_marginEnd="6dp" />
+
+                        <TextView
+                            android:id="@+id/chipVideo"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_card_rounded"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="5dp"
+                            android:text="Video"
+                            android:textColor="@color/neon_cyan"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                </LinearLayout>
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

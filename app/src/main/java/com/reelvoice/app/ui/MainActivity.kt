@@ -80,26 +80,61 @@ class MainActivity : AppCompatActivity() {
 
         val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
         val initialWake = prefs.getBoolean("pref_wake_word", true)
+        val initialWord = prefs.getString("pref_custom_wake_word", "Reel") ?: "Reel"
+
         binding.switchWakeWord.isChecked = initialWake
-        updateWakeWordHint(initialWake)
+        binding.etCustomWakeWord.setText(initialWord)
+        updateWakeWordHint(initialWake, initialWord)
+        binding.layoutCustomWakeWord.visibility = if (initialWake) View.VISIBLE else View.GONE
 
         binding.switchWakeWord.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("pref_wake_word", isChecked).apply()
-            updateWakeWordHint(isChecked)
+            val currentWord = binding.etCustomWakeWord.text?.toString()?.trim() ?: initialWord
+            updateWakeWordHint(isChecked, currentWord)
+            binding.layoutCustomWakeWord.visibility = if (isChecked) View.VISIBLE else View.GONE
 
-            if (ReelVoiceForegroundService.isServiceRunning) {
-                val updateIntent = Intent(this, ReelVoiceForegroundService::class.java).apply {
-                    action = ReelVoiceForegroundService.ACTION_UPDATE_SETTINGS
-                    putExtra(ReelVoiceForegroundService.EXTRA_REQUIRE_WAKE_WORD, isChecked)
-                }
-                startService(updateIntent)
+            sendSettingsUpdate(isChecked, currentWord)
+        }
+
+        binding.btnSaveCustomWakeWord.setOnClickListener {
+            val newWord = binding.etCustomWakeWord.text?.toString()?.trim()
+            if (!newWord.isNullOrBlank()) {
+                prefs.edit().putString("pref_custom_wake_word", newWord).apply()
+                updateWakeWordHint(binding.switchWakeWord.isChecked, newWord)
+                sendSettingsUpdate(binding.switchWakeWord.isChecked, newWord)
+                Toast.makeText(this, "Palabra clave guardada: \"$newWord\"", Toast.LENGTH_SHORT).show()
             }
+        }
+
+        // Preset Chips
+        val setWordFromChip: (String) -> Unit = { chipWord ->
+            binding.etCustomWakeWord.setText(chipWord)
+            prefs.edit().putString("pref_custom_wake_word", chipWord).apply()
+            updateWakeWordHint(binding.switchWakeWord.isChecked, chipWord)
+            sendSettingsUpdate(binding.switchWakeWord.isChecked, chipWord)
+            Toast.makeText(this, "Palabra activa: \"$chipWord\"", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.chipReel.setOnClickListener { setWordFromChip("Reel") }
+        binding.chipTiktok.setOnClickListener { setWordFromChip("Tiktok") }
+        binding.chipOye.setOnClickListener { setWordFromChip("Oye") }
+        binding.chipVideo.setOnClickListener { setWordFromChip("Video") }
+    }
+
+    private fun sendSettingsUpdate(requireWake: Boolean, customWord: String) {
+        if (ReelVoiceForegroundService.isServiceRunning) {
+            val updateIntent = Intent(this, ReelVoiceForegroundService::class.java).apply {
+                action = ReelVoiceForegroundService.ACTION_UPDATE_SETTINGS
+                putExtra(ReelVoiceForegroundService.EXTRA_REQUIRE_WAKE_WORD, requireWake)
+                putExtra(ReelVoiceForegroundService.EXTRA_CUSTOM_WAKE_WORD, customWord)
+            }
+            startService(updateIntent)
         }
     }
 
-    private fun updateWakeWordHint(isWakeWordActive: Boolean) {
+    private fun updateWakeWordHint(isWakeWordActive: Boolean, customWord: String) {
         if (isWakeWordActive) {
-            binding.tvWakeWordHint.text = getString(R.string.wake_word_active_hint)
+            binding.tvWakeWordHint.text = "Palabra clave activa: Di \"$customWord baja\", \"$customWord sube\" o \"$customWord like\""
             binding.tvWakeWordHint.setTextColor(getColor(R.color.neon_cyan))
         } else {
             binding.tvWakeWordHint.text = getString(R.string.wake_word_direct_hint)
