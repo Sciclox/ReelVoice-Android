@@ -1,0 +1,53 @@
+<resources>
+    <string name="app_name">ReelVoice</string>
+    <string name="app_tagline">Control y Scroll por Voz para Reels y TikTok</string>
+    <string name="accessibility_service_label">ReelVoice - Gestos Automáticos</string>
+    <string name="accessibility_service_description">Permite a ReelVoice simular gestos táctiles de deslizamiento (scroll) y doble toque (like) en aplicaciones de video como Instagram, TikTok y Facebook cuando detecta comandos de voz.</string>
+
+    <!-- UI Strings -->
+    <string name="title_status">Estado del Sistema</string>
+    <string name="status_active">Servicio Activo y Escuchando</string>
+    <string name="status_inactive">Servicio Inactivo</string>
+    <string name="btn_start_service">Iniciar ReelVoice</string>
+    <string name="btn_stop_service">Detener Servicio</string>
+    
+    <!-- Permissions -->
+    <string name="title_permissions">Permisos Requeridos</string>
+    <string name="perm_mic_title">Micrófono</string>
+    <string name="perm_mic_desc">Para escuchar tus comandos de voz continuamente.</string>
+    <string name="perm_overlay_title">Burbuja Flotante</string>
+    <string name="perm_overlay_desc">Para mostrar el botón flotante sobre TikTok e Instagram.</string>
+    <string name="perm_accessibility_title">Accesibilidad</string>
+    <string name="perm_accessibility_desc">Para emular los toques y deslizamientos en la pantalla.</string>
+    <string name="perm_notification_title">Notificaciones</string>
+    <string name="perm_notification_desc">Para mantener el servicio activo en segundo plano.</string>
+    
+    <string name="btn_grant">Conceder</string>
+    <string name="status_granted">Concedido</string>
+    <string name="status_pending">Pendiente</string>
+    
+    <!-- Commands Section -->
+    <string name="title_commands">Comandos de Voz Disponibles</string>
+    <string name="cmd_next">"Siguiente" / "Baja" / "Next"</string>
+    <string name="cmd_next_desc">Desliza al próximo video (Swipe Up)</string>
+    <string name="cmd_prev">"Atrás" / "Sube" / "Back"</string>
+    <string name="cmd_prev_desc">Regresa al video anterior (Swipe Down)</string>
+    <string name="cmd_like">"Like" / "Me gusta"</string>
+    <string name="cmd_like_desc">Da me gusta con doble toque en el centro</string>
+    <string name="cmd_pause">"Pausa" / "Play"</string>
+    <string name="cmd_pause_desc">Pausa o reproduce el video actual</string>
+    
+    <!-- Notification -->
+    <string name="notif_channel_name">Servicio ReelVoice</string>
+    <string name="notif_channel_desc">Mantiene el reconocedor de voz activo en segundo plano</string>
+    <string name="notif_title">ReelVoice está escuchando 🎙️</string>
+    <string name="notif_text">Di "siguiente" para cambiar de video</string>
+    <string name="notif_action_pause_mic">Silenciar Mic</string>
+    <string name="notif_action_resume_mic">Activar Mic</string>
+    <string name="notif_action_stop">Cerrar</string>
+
+    <!-- Feedback -->
+    <string name="toast_cmd_detected">Comando: %1$s</string>
+    <string name="toast_accessibility_needed">Por favor activa el servicio de Accesibilidad de ReelVoice</string>
+    <string name="toast_overlay_needed">Por favor concede el permiso para mostrar sobre otras aplicaciones</string>
+</resources>
