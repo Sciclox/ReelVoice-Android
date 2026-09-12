@@ -1,16 +1,16 @@
 package com.reelvoice.app.voice
 
 import android.content.Context
-import android.content.res.AssetManager
+import android.content.Intent
+import android.media.AudioManager
+import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
-import org.json.JSONObject
-import org.vosk.Model
-import org.vosk.Recognizer
-import org.vosk.android.RecognitionListener
-import org.vosk.android.SpeechService
-import java.io.File
 import java.util.Locale
 
 enum class VoiceCommand {
@@ -22,12 +22,10 @@ enum class VoiceCommand {
 }
 
 /**
- * Gestor del motor de reconocimiento de voz offline continuo por hardware (AudioRecord + Vosk).
- * Mantiene el canal de audio abierto de manera ininterrumpida (como WhatsApp), garantizando:
- * 1. Indicador verde de privacidad fijo y sin parpadeos en Android 12+.
- * 2. Cero pitidos ("Bim") del sistema.
- * 3. Escucha continua sin timeouts por silencio.
- * 4. Procesamiento 100% local y privado con soporte para palabras clave personalizadas (Fuzzy matching).
+ * Gestor del motor de reconocimiento de voz continuo de Google SpeechRecognizer.
+ * Configurado con la Opción 1: Ventanas de silencio extendidas (10s) y modo dictado
+ * para mantener el micrófono abierto de forma continua y estabilizar el indicador verde
+ * de privacidad de Android 12+, evitando reinicios rápidos cada 2-3 segundos.
  */
 class VoiceRecognitionManager(
     private val context: Context,
@@ -37,37 +35,75 @@ class VoiceRecognitionManager(
 
     companion object {
         private const val TAG = "VoiceRecognitionMgr"
-        private const val SAMPLE_RATE = 16000.0f
-        private const val COMMAND_COOLDOWN_MS = 1200L // Evita comandos repetidos y dobles saltos
+        private const val COMMAND_COOLDOWN_MS = 1200L // 1.2s para evitar dobles saltos
+        private const val EXTENDED_SILENCE_MS = 10000L // 10s de espera antes de que Google considere silencio
     }
 
     var requireWakeWord: Boolean = true
     var customWakeWord: String = "reel"
     private var wakeWordWindowUntil: Long = 0L
 
-    private var model: Model? = null
-    private var speechService: SpeechService? = null
-    private var isModelLoading = false
+    private var speechRecognizer: SpeechRecognizer? = null
     private var isRunning = false
     private var isPausedByUser = false
     private var lastCommandTimestamp = 0L
+    private var isCommandExecutedInCurrentSession = false
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        val defaultLocale = Locale.getDefault().toLanguageTag()
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, defaultLocale)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, defaultLocale)
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+
+        // 🌟 Opción 1: Extender ventanas de silencio para mantener la sesión abierta
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, EXTENDED_SILENCE_MS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, EXTENDED_SILENCE_MS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, EXTENDED_SILENCE_MS)
+        putExtra("android.speech.extra.DICTATION_MODE", true)
+
+        // Variantes de compatibilidad con versiones específicas de la app de Google
+        putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", EXTENDED_SILENCE_MS)
+        putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", EXTENDED_SILENCE_MS)
+        putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", EXTENDED_SILENCE_MS)
+    }
+
+    private fun muteSystemSounds(mute: Boolean) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val direction = if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
+                audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, direction, 0)
+                audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, direction, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.setStreamMute(AudioManager.STREAM_SYSTEM, mute)
+                @Suppress("DEPRECATION")
+                audioManager.setStreamMute(AudioManager.STREAM_NOTIFICATION, mute)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo ajustar volumen: ${e.message}")
+        }
+    }
 
     fun startListening() {
         if (isRunning) return
         isRunning = true
         isPausedByUser = false
+        muteSystemSounds(true)
 
-        if (model == null) {
-            loadModelAndStart()
-        } else {
-            startSpeechService()
+        mainHandler.post {
+            initAndStartRecognizer()
         }
     }
 
     fun pauseListening() {
         isPausedByUser = true
-        stopSpeechServiceInternal()
+        stopInternal()
+        muteSystemSounds(false)
         onStatusChanged(false, "Micrófono en pausa")
     }
 
@@ -76,10 +112,9 @@ class VoiceRecognitionManager(
             startListening()
         } else {
             isPausedByUser = false
-            if (model != null) {
-                startSpeechService()
-            } else {
-                loadModelAndStart()
+            muteSystemSounds(true)
+            mainHandler.post {
+                initAndStartRecognizer()
             }
         }
     }
@@ -87,164 +122,133 @@ class VoiceRecognitionManager(
     fun stopListening() {
         isRunning = false
         isPausedByUser = false
-        stopSpeechServiceInternal()
-        onStatusChanged(false, "Detenido")
-    }
-
-    private fun loadModelAndStart() {
-        if (isModelLoading) return
-        isModelLoading = true
-        onStatusChanged(false, "Cargando motor offline...")
-
-        Thread {
-            try {
-                val modelDir = File(context.filesDir, "model-es")
-                val testFile = File(modelDir, "am/final.mdl")
-
-                if (!testFile.exists() || testFile.length() < 1000000L) {
-                    Log.i(TAG, "Extrayendo modelo offline a ${modelDir.absolutePath}...")
-                    copyAssetFolder(context.assets, "model-es", modelDir)
-                }
-
-                Log.i(TAG, "Instanciando Model Vosk en ${modelDir.absolutePath}...")
-                val loadedModel = Model(modelDir.absolutePath)
-
-                mainHandler.post {
-                    model = loadedModel
-                    isModelLoading = false
-                    Log.i(TAG, "Modelo acústico offline cargado correctamente.")
-                    if (isRunning && !isPausedByUser) {
-                        startSpeechService()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error crítico cargando modelo Vosk: ${e.message}", e)
-                mainHandler.post {
-                    isModelLoading = false
-                    onStatusChanged(false, "Error: ${e.message}")
-                }
-            }
-        }.start()
-    }
-
-    private fun copyAssetFolder(assetManager: AssetManager, fromAssetPath: String, toDir: File) {
-        val files = assetManager.list(fromAssetPath) ?: return
-        if (!toDir.exists()) toDir.mkdirs()
-
-        for (file in files) {
-            val subAsset = if (fromAssetPath.isEmpty()) file else "$fromAssetPath/$file"
-            val destFile = File(toDir, file)
-            val subList = assetManager.list(subAsset)
-            if (subList != null && subList.isNotEmpty()) {
-                copyAssetFolder(assetManager, subAsset, destFile)
-            } else {
-                assetManager.open(subAsset).use { input ->
-                    destFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-            }
+        mainHandler.post {
+            stopInternal()
+            muteSystemSounds(false)
+            onStatusChanged(false, "Detenido")
         }
     }
 
-    private fun startSpeechService() {
-        val currentModel = model ?: run {
-            loadModelAndStart()
+    private fun initAndStartRecognizer() {
+        if (!isRunning || isPausedByUser) return
+
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            Log.e(TAG, "SpeechRecognizer no está disponible en este dispositivo.")
+            onStatusChanged(false, "Reconocimiento no disponible")
             return
         }
 
         try {
-            stopSpeechServiceInternal()
-            Log.i(TAG, "Iniciando SpeechService con AudioRecord a ${SAMPLE_RATE.toInt()}Hz...")
-            val recognizer = Recognizer(currentModel, SAMPLE_RATE)
-            val service = SpeechService(recognizer, SAMPLE_RATE)
-            speechService = service
-            val started = service.startListening(createRecognitionListener())
-            Log.i(TAG, "SpeechService startListening resultado: $started")
-            if (started) {
-                onStatusChanged(true, "Escuchando continuamente")
-            } else {
-                onStatusChanged(false, "No se pudo activar el micrófono")
+            if (speechRecognizer == null) {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                    setRecognitionListener(createRecognitionListener())
+                }
             }
+            speechRecognizer?.startListening(recognizerIntent)
+            onStatusChanged(true, "Escuchando comandos...")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al iniciar SpeechService: ${e.message}", e)
-            onStatusChanged(false, "Error de micrófono: ${e.message}")
+            Log.e(TAG, "Error al iniciar SpeechRecognizer: ${e.message}")
+            stopInternal()
+            scheduleRestart(500)
         }
     }
 
-    private fun stopSpeechServiceInternal() {
+    private fun stopInternal() {
         try {
-            speechService?.stop()
-            speechService?.shutdown()
+            speechRecognizer?.stopListening()
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
         } catch (e: Exception) {
-            Log.w(TAG, "Excepción al detener SpeechService: ${e.message}")
+            Log.w(TAG, "Excepción al detener SpeechRecognizer: ${e.message}")
         } finally {
-            speechService = null
+            speechRecognizer = null
         }
+    }
+
+    private fun scheduleRestart(delayMs: Long) {
+        if (!isRunning || isPausedByUser) return
+
+        mainHandler.removeCallbacksAndMessages(null)
+        mainHandler.postDelayed({
+            if (isRunning && !isPausedByUser) {
+                try {
+                    // Intento de reinicio suave para no destruir ni liberar la conexión Binder si es posible
+                    speechRecognizer?.cancel()
+                    speechRecognizer?.startListening(recognizerIntent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Reinicio suave no disponible, reiniciando instancia: ${e.message}")
+                    stopInternal()
+                    initAndStartRecognizer()
+                }
+            }
+        }, delayMs)
     }
 
     private fun createRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
-            override fun onPartialResult(hypothesis: String?) {
-                hypothesis?.let { processVoskJson(it, isPartial = true) }
+            override fun onReadyForSpeech(params: Bundle?) {
+                Log.d(TAG, "Listo para escuchar")
+                isCommandExecutedInCurrentSession = false
+                onStatusChanged(true, "Escuchando continuamente")
             }
 
-            override fun onResult(hypothesis: String?) {
-                hypothesis?.let { processVoskJson(it, isPartial = false) }
+            override fun onBeginningOfSpeech() {
+                Log.d(TAG, "Voz detectada")
+                isCommandExecutedInCurrentSession = false
             }
 
-            override fun onFinalResult(hypothesis: String?) {
-                hypothesis?.let { processVoskJson(it, isPartial = false) }
+            override fun onRmsChanged(rmsdB: Float) {}
+
+            override fun onBufferReceived(buffer: ByteArray?) {}
+
+            override fun onEndOfSpeech() {
+                Log.d(TAG, "Fin del fragmento de voz")
             }
 
-            override fun onError(exception: Exception?) {
-                Log.e(TAG, "Error en reconocimiento Vosk: ${exception?.message}", exception)
+            override fun onError(error: Int) {
+                Log.d(TAG, "Código de evento del recognizer: $error")
+                isCommandExecutedInCurrentSession = false
+                // Reconexión ultra rápida (100ms) para minimizar tiempo de micrófono liberado
+                scheduleRestart(100)
             }
 
-            override fun onTimeout() {
-                Log.d(TAG, "Vosk recognizer timeout")
+            override fun onResults(results: Bundle?) {
+                processMatches(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
+                isCommandExecutedInCurrentSession = false
+                scheduleRestart(100)
             }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                processMatches(partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) {}
         }
     }
 
-    private fun processVoskJson(jsonString: String, isPartial: Boolean) {
-        try {
-            val json = JSONObject(jsonString)
-            val phrase = if (isPartial) {
-                json.optString("partial", "")
-            } else {
-                json.optString("text", "")
-            }
+    private fun processMatches(matches: ArrayList<String>?) {
+        if (matches.isNullOrEmpty()) return
 
-            if (phrase.isNotBlank()) {
-                handleRecognizedPhrase(phrase)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error parseando hipótesis de Vosk: $jsonString")
-        }
-    }
-
-    private fun handleRecognizedPhrase(phrase: String) {
-        val now = System.currentTimeMillis()
-        if (now - lastCommandTimestamp < COMMAND_COOLDOWN_MS) {
+        // Si ya se ejecutó un comando en esta frase hablada (ej: en partialResults), no volver a disparar en onResults
+        if (isCommandExecutedInCurrentSession) {
             return
         }
 
-        val normalized = normalizeText(phrase)
-        val command = parseCommand(normalized)
+        val now = System.currentTimeMillis()
+        if (now - lastCommandTimestamp < COMMAND_COOLDOWN_MS) {
+            return // Evita comandos repetidos dentro de la ventana de cooldown
+        }
 
-        if (command != VoiceCommand.UNKNOWN) {
-            lastCommandTimestamp = now
-            Log.i(TAG, "Comando reconocido: $command a partir de: '$phrase'")
-            
-            mainHandler.post {
+        for (phrase in matches) {
+            val normalized = normalizeText(phrase)
+            Log.d(TAG, "Frase escuchada: '$phrase' -> Normalizada: '$normalized'")
+
+            val command = parseCommand(normalized)
+            if (command != VoiceCommand.UNKNOWN) {
+                lastCommandTimestamp = now
+                isCommandExecutedInCurrentSession = true
                 onCommandDetected(command)
-                // Reinicia el buffer del reconocedor para evitar repetir la misma orden
-                try {
-                    speechService?.reset()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error al resetear reconocedor: ${e.message}")
-                }
+                break
             }
         }
     }

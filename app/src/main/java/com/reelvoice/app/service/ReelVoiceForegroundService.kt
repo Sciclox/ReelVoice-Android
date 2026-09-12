@@ -46,8 +46,7 @@ class ReelVoiceForegroundService : Service() {
     }
 
     private var voiceManager: VoiceRecognitionManager? = null
-    private var isMicActive = false
-    private var currentStatusMessage = "Iniciando reconocimiento..."
+    private var isMicActive = true
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -71,12 +70,13 @@ class ReelVoiceForegroundService : Service() {
             }
             ACTION_PAUSE_MIC -> {
                 isMicActive = false
-                currentStatusMessage = "Micrófono en pausa. Toca para reanudar."
                 voiceManager?.pauseListening()
                 updateNotification()
             }
             ACTION_RESUME_MIC -> {
+                isMicActive = true
                 voiceManager?.resumeListening()
+                updateNotification()
             }
             ACTION_UPDATE_SETTINGS -> {
                 val requireWake = intent.getBooleanExtra(EXTRA_REQUIRE_WAKE_WORD, true)
@@ -101,9 +101,6 @@ class ReelVoiceForegroundService : Service() {
             onCommandDetected = { cmd -> handleCommand(cmd) },
             onStatusChanged = { isListening, msg ->
                 Log.d(TAG, "Estado de voz: $msg (Escuchando: $isListening)")
-                isMicActive = isListening
-                currentStatusMessage = msg
-                updateNotification()
             }
         ).apply {
             requireWakeWord = requireWake
@@ -210,7 +207,7 @@ class ReelVoiceForegroundService : Service() {
         val contentText = if (isMicActive) {
             getString(R.string.notif_text)
         } else {
-            currentStatusMessage
+            "Micrófono en pausa. Toca para reanudar."
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
