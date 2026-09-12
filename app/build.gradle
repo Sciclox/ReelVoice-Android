@@ -9,10 +9,14 @@ android {
         applicationId "com.reelvoice.scroll"
         minSdk 24
         targetSdk 33
-        versionCode 29
-        versionName "2.9.0"
+        versionCode 30
+        versionName "3.0.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    aaptOptions {
+        noCompress 'fst', 'mdl', 'dubm', 'ie', 'mat', 'stats', 'conf'
     }
 
     signingConfigs {
@@ -59,6 +63,10 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-service:2.7.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    // Vosk Offline Speech Recognition & Continuous AudioRecord
+    implementation 'com.alphacephei:vosk-android:0.3.47'
+    implementation 'net.java.dev.jna:jna:5.13.0@aar'
 
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

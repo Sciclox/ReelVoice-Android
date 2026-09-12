@@ -101,6 +101,8 @@ class ReelVoiceForegroundService : Service() {
             onCommandDetected = { cmd -> handleCommand(cmd) },
             onStatusChanged = { isListening, msg ->
                 Log.d(TAG, "Estado de voz: $msg (Escuchando: $isListening)")
+                isMicActive = isListening
+                updateNotification()
             }
         ).apply {
             requireWakeWord = requireWake

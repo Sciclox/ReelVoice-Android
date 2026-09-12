@@ -1,16 +1,16 @@
 package com.reelvoice.app.voice
 
 import android.content.Context
-import android.content.Intent
-import android.media.AudioManager
-import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.util.Log
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.RecognitionListener
+import org.vosk.android.SpeechService
+import org.vosk.android.StorageService
+import java.io.IOException
 import java.util.Locale
 
 enum class VoiceCommand {
@@ -22,8 +22,12 @@ enum class VoiceCommand {
 }
 
 /**
- * Gestor del motor de reconocimiento de voz local continuo.
- * Escucha en segundo plano y analiza palabras clave en tiempo real.
+ * Gestor del motor de reconocimiento de voz offline continuo por hardware (AudioRecord + Vosk).
+ * Mantiene el canal de audio abierto de manera ininterrumpida (como WhatsApp), garantizando:
+ * 1. Indicador verde de privacidad fijo y sin parpadeos en Android 12+.
+ * 2. Cero pitidos ("Bim") del sistema.
+ * 3. Escucha continua sin timeouts por silencio.
+ * 4. Procesamiento 100% local y privado con soporte para palabras clave personalizadas (Fuzzy matching).
  */
 class VoiceRecognitionManager(
     private val context: Context,
@@ -33,63 +37,37 @@ class VoiceRecognitionManager(
 
     companion object {
         private const val TAG = "VoiceRecognitionMgr"
-        private const val COMMAND_COOLDOWN_MS = 1200L // 1.2s para evitar dobles saltos y permitir transiciones suaves
+        private const val SAMPLE_RATE = 16000.0f
+        private const val COMMAND_COOLDOWN_MS = 1200L // Evita comandos repetidos y dobles saltos
     }
 
     var requireWakeWord: Boolean = true
     var customWakeWord: String = "reel"
     private var wakeWordWindowUntil: Long = 0L
 
-    private var speechRecognizer: SpeechRecognizer? = null
+    private var model: Model? = null
+    private var speechService: SpeechService? = null
+    private var isModelLoading = false
     private var isRunning = false
     private var isPausedByUser = false
     private var lastCommandTimestamp = 0L
-    private var isCommandExecutedInCurrentSession = false
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        val defaultLocale = Locale.getDefault().toLanguageTag()
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, defaultLocale)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, defaultLocale)
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-    }
-
-    private fun muteSystemSounds(mute: Boolean) {
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val direction = if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
-                audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, direction, 0)
-                audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, direction, 0)
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager.setStreamMute(AudioManager.STREAM_SYSTEM, mute)
-                @Suppress("DEPRECATION")
-                audioManager.setStreamMute(AudioManager.STREAM_NOTIFICATION, mute)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "No se pudo ajustar volumen: ${e.message}")
-        }
-    }
 
     fun startListening() {
         if (isRunning) return
         isRunning = true
         isPausedByUser = false
-        muteSystemSounds(true)
 
-        mainHandler.post {
-            initAndStartRecognizer()
+        if (model == null) {
+            loadModelAndStart()
+        } else {
+            startSpeechService()
         }
     }
 
     fun pauseListening() {
         isPausedByUser = true
-        stopInternal()
-        muteSystemSounds(false)
+        stopSpeechServiceInternal()
         onStatusChanged(false, "Micrófono en pausa")
     }
 
@@ -98,9 +76,10 @@ class VoiceRecognitionManager(
             startListening()
         } else {
             isPausedByUser = false
-            muteSystemSounds(true)
-            mainHandler.post {
-                initAndStartRecognizer()
+            if (model != null) {
+                startSpeechService()
+            } else {
+                loadModelAndStart()
             }
         }
     }
@@ -108,123 +87,132 @@ class VoiceRecognitionManager(
     fun stopListening() {
         isRunning = false
         isPausedByUser = false
-        mainHandler.post {
-            stopInternal()
-            muteSystemSounds(false)
-        }
+        stopSpeechServiceInternal()
+        onStatusChanged(false, "Detenido")
     }
 
-    private fun initAndStartRecognizer() {
-        if (!isRunning || isPausedByUser) return
+    private fun loadModelAndStart() {
+        if (isModelLoading) return
+        isModelLoading = true
+        onStatusChanged(false, "Iniciando motor offline...")
 
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            Log.e(TAG, "SpeechRecognizer no está disponible en este dispositivo.")
-            onStatusChanged(false, "Reconocimiento no disponible")
+        StorageService.unpack(
+            context,
+            "model-es",
+            "model",
+            { loadedModel: Model ->
+                mainHandler.post {
+                    model = loadedModel
+                    isModelLoading = false
+                    Log.i(TAG, "Modelo acústico offline cargado correctamente.")
+                    if (isRunning && !isPausedByUser) {
+                        startSpeechService()
+                    }
+                }
+            },
+            { exception: IOException ->
+                mainHandler.post {
+                    isModelLoading = false
+                    Log.e(TAG, "Error al desempaquetar el modelo Vosk: ${exception.message}", exception)
+                    onStatusChanged(false, "Error al cargar modelo")
+                }
+            }
+        )
+    }
+
+    private fun startSpeechService() {
+        val currentModel = model ?: run {
+            loadModelAndStart()
             return
         }
 
         try {
-            if (speechRecognizer == null) {
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-                    setRecognitionListener(createRecognitionListener())
-                }
+            stopSpeechServiceInternal()
+            val recognizer = Recognizer(currentModel, SAMPLE_RATE)
+            speechService = SpeechService(recognizer, SAMPLE_RATE).apply {
+                startListening(createRecognitionListener())
             }
-            speechRecognizer?.startListening(recognizerIntent)
-            onStatusChanged(true, "Escuchando comandos...")
+            onStatusChanged(true, "Escuchando continuamente")
+            Log.i(TAG, "SpeechService de Vosk iniciado con AudioRecord a ${SAMPLE_RATE.toInt()}Hz.")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al iniciar SpeechRecognizer: ${e.message}")
-            stopInternal()
-            scheduleRestart(1000)
+            Log.e(TAG, "Error al iniciar SpeechService: ${e.message}", e)
+            onStatusChanged(false, "Error de micrófono: ${e.message}")
         }
     }
 
-    private fun stopInternal() {
+    private fun stopSpeechServiceInternal() {
         try {
-            speechRecognizer?.stopListening()
-            speechRecognizer?.cancel()
-            speechRecognizer?.destroy()
+            speechService?.stop()
+            speechService?.shutdown()
         } catch (e: Exception) {
-            Log.w(TAG, "Excepción al detener SpeechRecognizer: ${e.message}")
+            Log.w(TAG, "Excepción al detener SpeechService: ${e.message}")
         } finally {
-            speechRecognizer = null
+            speechService = null
         }
-    }
-
-    private fun scheduleRestart(delayMs: Long) {
-        if (!isRunning || isPausedByUser) return
-
-        mainHandler.removeCallbacksAndMessages(null)
-        mainHandler.postDelayed({
-            if (isRunning && !isPausedByUser) {
-                stopInternal()
-                initAndStartRecognizer()
-            }
-        }, delayMs)
     }
 
     private fun createRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                Log.d(TAG, "Listo para escuchar")
-                isCommandExecutedInCurrentSession = false
+            override fun onPartialResult(hypothesis: String?) {
+                hypothesis?.let { processVoskJson(it, isPartial = true) }
             }
 
-            override fun onBeginningOfSpeech() {
-                Log.d(TAG, "Voz detectada")
-                isCommandExecutedInCurrentSession = false
+            override fun onResult(hypothesis: String?) {
+                hypothesis?.let { processVoskJson(it, isPartial = false) }
             }
 
-            override fun onRmsChanged(rmsdB: Float) {}
-
-            override fun onBufferReceived(buffer: ByteArray?) {}
-
-            override fun onEndOfSpeech() {
-                Log.d(TAG, "Fin del fragmento de voz")
+            override fun onFinalResult(hypothesis: String?) {
+                hypothesis?.let { processVoskJson(it, isPartial = false) }
             }
 
-            override fun onError(error: Int) {
-                Log.d(TAG, "Código de evento del recognizer: $error")
-                isCommandExecutedInCurrentSession = false
-                scheduleRestart(350)
+            override fun onError(exception: Exception?) {
+                Log.e(TAG, "Error en reconocimiento Vosk: ${exception?.message}", exception)
             }
 
-            override fun onResults(results: Bundle?) {
-                processMatches(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
-                isCommandExecutedInCurrentSession = false
-                scheduleRestart(200)
+            override fun onTimeout() {
+                Log.d(TAG, "Vosk recognizer timeout")
             }
-
-            override fun onPartialResults(partialResults: Bundle?) {
-                processMatches(partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
-            }
-
-            override fun onEvent(eventType: Int, params: Bundle?) {}
         }
     }
 
-    private fun processMatches(matches: ArrayList<String>?) {
-        if (matches.isNullOrEmpty()) return
+    private fun processVoskJson(jsonString: String, isPartial: Boolean) {
+        try {
+            val json = JSONObject(jsonString)
+            val phrase = if (isPartial) {
+                json.optString("partial", "")
+            } else {
+                json.optString("text", "")
+            }
 
-        // Si ya se ejecutó un comando en esta frase hablada (ej: en partialResults), no volver a disparar en onResults
-        if (isCommandExecutedInCurrentSession) {
+            if (phrase.isNotBlank()) {
+                handleRecognizedPhrase(phrase)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error parseando hipótesis de Vosk: $jsonString")
+        }
+    }
+
+    private fun handleRecognizedPhrase(phrase: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastCommandTimestamp < COMMAND_COOLDOWN_MS) {
             return
         }
 
-        val now = System.currentTimeMillis()
-        if (now - lastCommandTimestamp < COMMAND_COOLDOWN_MS) {
-            return // Evita comandos repetidos dentro de la ventana de cooldown
-        }
+        val normalized = normalizeText(phrase)
+        val command = parseCommand(normalized)
 
-        for (phrase in matches) {
-            val normalized = normalizeText(phrase)
-            Log.d(TAG, "Frase escuchada: '$phrase' -> Normalizada: '$normalized'")
-
-            val command = parseCommand(normalized)
-            if (command != VoiceCommand.UNKNOWN) {
-                lastCommandTimestamp = now
-                isCommandExecutedInCurrentSession = true
+        if (command != VoiceCommand.UNKNOWN) {
+            lastCommandTimestamp = now
+            Log.i(TAG, "Comando reconocido: $command a partir de: '$phrase'")
+            
+            mainHandler.post {
                 onCommandDetected(command)
-                break
+                // Reinicia el buffer del reconocedor para evitar repetir la misma orden
+                try {
+                    speechService?.reset()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error al resetear reconocedor: ${e.message}")
+                }
             }
         }
     }
