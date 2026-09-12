@@ -63,9 +63,12 @@ class VoiceRecognitionManager(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 val direction = if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
                 audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, direction, 0)
+                audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, direction, 0)
             } else {
                 @Suppress("DEPRECATION")
                 audioManager.setStreamMute(AudioManager.STREAM_SYSTEM, mute)
+                @Suppress("DEPRECATION")
+                audioManager.setStreamMute(AudioManager.STREAM_NOTIFICATION, mute)
             }
         } catch (e: Exception) {
             Log.w(TAG, "No se pudo ajustar volumen: ${e.message}")
@@ -76,6 +79,7 @@ class VoiceRecognitionManager(
         if (isRunning) return
         isRunning = true
         isPausedByUser = false
+        muteSystemSounds(true)
 
         mainHandler.post {
             initAndStartRecognizer()
@@ -94,6 +98,7 @@ class VoiceRecognitionManager(
             startListening()
         } else {
             isPausedByUser = false
+            muteSystemSounds(true)
             mainHandler.post {
                 initAndStartRecognizer()
             }
@@ -124,7 +129,6 @@ class VoiceRecognitionManager(
                     setRecognitionListener(createRecognitionListener())
                 }
             }
-            muteSystemSounds(true)
             speechRecognizer?.startListening(recognizerIntent)
             onStatusChanged(true, "Escuchando comandos...")
         } catch (e: Exception) {
@@ -143,7 +147,6 @@ class VoiceRecognitionManager(
             Log.w(TAG, "Excepción al detener SpeechRecognizer: ${e.message}")
         } finally {
             speechRecognizer = null
-            muteSystemSounds(false)
         }
     }
 
@@ -164,7 +167,6 @@ class VoiceRecognitionManager(
             override fun onReadyForSpeech(params: Bundle?) {
                 Log.d(TAG, "Listo para escuchar")
                 isCommandExecutedInCurrentSession = false
-                muteSystemSounds(false)
             }
 
             override fun onBeginningOfSpeech() {
@@ -183,14 +185,12 @@ class VoiceRecognitionManager(
             override fun onError(error: Int) {
                 Log.d(TAG, "Código de evento del recognizer: $error")
                 isCommandExecutedInCurrentSession = false
-                muteSystemSounds(true)
                 scheduleRestart(350)
             }
 
             override fun onResults(results: Bundle?) {
                 processMatches(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
                 isCommandExecutedInCurrentSession = false
-                muteSystemSounds(true)
                 scheduleRestart(200)
             }
 
