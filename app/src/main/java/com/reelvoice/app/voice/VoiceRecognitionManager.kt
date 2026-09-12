@@ -47,7 +47,6 @@ class VoiceRecognitionManager(
 
     var requireWakeWord: Boolean = false
     var customWakeWord: String = "reel"
-    var enableBluetoothSco: Boolean = true
     private var wakeWordWindowUntil: Long = 0L
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -62,10 +61,10 @@ class VoiceRecognitionManager(
         val defaultLocale = Locale.getDefault().toLanguageTag()
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, defaultLocale)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, defaultLocale)
+        putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("es-419", "es-ES", "es-US", "es-MX", "en-US"))
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
 
         // Ventanas de silencio ágiles para respuesta instantánea (< 500-750ms)
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_COMPLETE_MS)
@@ -76,28 +75,6 @@ class VoiceRecognitionManager(
         putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", SILENCE_COMPLETE_MS)
         putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", SILENCE_POSSIBLY_COMPLETE_MS)
         putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", SILENCE_MINIMUM_MS)
-    }
-
-    private fun setupBluetoothSco(enable: Boolean) {
-        if (!enableBluetoothSco && enable) return
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            if (enable) {
-                if (audioManager.isBluetoothScoAvailableOffCall && !audioManager.isBluetoothScoOn) {
-                    audioManager.startBluetoothSco()
-                    audioManager.isBluetoothScoOn = true
-                    Log.i(TAG, "Bluetooth SCO activado para audífonos inalámbricos")
-                }
-            } else {
-                if (audioManager.isBluetoothScoOn) {
-                    audioManager.isBluetoothScoOn = false
-                    audioManager.stopBluetoothSco()
-                    Log.i(TAG, "Bluetooth SCO detenido")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Excepción al configurar Bluetooth SCO: ${e.message}")
-        }
     }
 
     private fun muteSystemSounds(mute: Boolean) {
@@ -122,7 +99,6 @@ class VoiceRecognitionManager(
         if (isRunning) return
         isRunning = true
         isPausedByUser = false
-        setupBluetoothSco(true)
         muteSystemSounds(true)
 
         mainHandler.post {
@@ -132,7 +108,6 @@ class VoiceRecognitionManager(
 
     fun pauseListening() {
         isPausedByUser = true
-        setupBluetoothSco(false)
         stopInternal()
         muteSystemSounds(false)
         onStatusChanged(false, "Micrófono en pausa")
@@ -143,7 +118,6 @@ class VoiceRecognitionManager(
             startListening()
         } else {
             isPausedByUser = false
-            setupBluetoothSco(true)
             muteSystemSounds(true)
             mainHandler.post {
                 initAndStartRecognizer()
@@ -154,7 +128,6 @@ class VoiceRecognitionManager(
     fun stopListening() {
         isRunning = false
         isPausedByUser = false
-        setupBluetoothSco(false)
         mainHandler.post {
             stopInternal()
             muteSystemSounds(false)
@@ -173,14 +146,7 @@ class VoiceRecognitionManager(
 
         try {
             if (speechRecognizer == null) {
-                speechRecognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-                    Log.i(TAG, "Iniciando OnDeviceSpeechRecognizer (Procesamiento local en el chip, latencia cero)")
-                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-                } else {
-                    Log.i(TAG, "Iniciando SpeechRecognizer estándar")
-                    SpeechRecognizer.createSpeechRecognizer(context)
-                }.apply {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                     setRecognitionListener(createRecognitionListener())
                 }
             }
@@ -286,6 +252,12 @@ class VoiceRecognitionManager(
                 lastCommandTimestamp = now
                 isCommandExecutedInCurrentSession = true
                 onCommandDetected(command)
+                // Concluir la sesión actual inmediatamente para reiniciar de prisa y no bloquear la siguiente orden
+                mainHandler.post {
+                    try {
+                        speechRecognizer?.stopListening()
+                    } catch (_: Exception) {}
+                }
                 break
             }
         }

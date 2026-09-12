@@ -81,35 +81,11 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
         val initialWake = prefs.getBoolean("pref_wake_word", false)
         val initialWord = prefs.getString("pref_custom_wake_word", "Reel") ?: "Reel"
-        val initialSmartSleep = prefs.getBoolean("pref_smart_sleep", true)
-        val initialBtSco = prefs.getBoolean("pref_bt_sco", true)
 
         binding.switchWakeWord.isChecked = initialWake
         binding.etCustomWakeWord.setText(initialWord)
         updateWakeWordHint(initialWake, initialWord)
         binding.layoutCustomWakeWord.visibility = if (initialWake) View.VISIBLE else View.GONE
-
-        binding.switchSmartSleep.isChecked = initialSmartSleep
-        binding.switchSmartSleep.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("pref_smart_sleep", isChecked).apply()
-            sendSettingsUpdate(
-                requireWake = binding.switchWakeWord.isChecked,
-                customWord = binding.etCustomWakeWord.text?.toString()?.trim() ?: initialWord,
-                smartSleep = isChecked,
-                btSco = binding.switchBluetoothSco.isChecked
-            )
-        }
-
-        binding.switchBluetoothSco.isChecked = initialBtSco
-        binding.switchBluetoothSco.setOnCheckedChangeListener { _, isChecked ->
-            prefs.edit().putBoolean("pref_bt_sco", isChecked).apply()
-            sendSettingsUpdate(
-                requireWake = binding.switchWakeWord.isChecked,
-                customWord = binding.etCustomWakeWord.text?.toString()?.trim() ?: initialWord,
-                smartSleep = binding.switchSmartSleep.isChecked,
-                btSco = isChecked
-            )
-        }
 
         binding.switchWakeWord.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("pref_wake_word", isChecked).apply()
@@ -117,12 +93,7 @@ class MainActivity : AppCompatActivity() {
             updateWakeWordHint(isChecked, currentWord)
             binding.layoutCustomWakeWord.visibility = if (isChecked) View.VISIBLE else View.GONE
 
-            sendSettingsUpdate(
-                requireWake = isChecked,
-                customWord = currentWord,
-                smartSleep = binding.switchSmartSleep.isChecked,
-                btSco = binding.switchBluetoothSco.isChecked
-            )
+            sendSettingsUpdate(isChecked, currentWord)
         }
 
         binding.btnSaveCustomWakeWord.setOnClickListener {
@@ -130,12 +101,7 @@ class MainActivity : AppCompatActivity() {
             if (!newWord.isNullOrBlank()) {
                 prefs.edit().putString("pref_custom_wake_word", newWord).apply()
                 updateWakeWordHint(binding.switchWakeWord.isChecked, newWord)
-                sendSettingsUpdate(
-                    requireWake = binding.switchWakeWord.isChecked,
-                    customWord = newWord,
-                    smartSleep = binding.switchSmartSleep.isChecked,
-                    btSco = binding.switchBluetoothSco.isChecked
-                )
+                sendSettingsUpdate(binding.switchWakeWord.isChecked, newWord)
                 Toast.makeText(this, "Palabra clave guardada: \"$newWord\"", Toast.LENGTH_SHORT).show()
             }
         }
@@ -145,12 +111,7 @@ class MainActivity : AppCompatActivity() {
             binding.etCustomWakeWord.setText(chipWord)
             prefs.edit().putString("pref_custom_wake_word", chipWord).apply()
             updateWakeWordHint(binding.switchWakeWord.isChecked, chipWord)
-            sendSettingsUpdate(
-                requireWake = binding.switchWakeWord.isChecked,
-                customWord = chipWord,
-                smartSleep = binding.switchSmartSleep.isChecked,
-                btSco = binding.switchBluetoothSco.isChecked
-            )
+            sendSettingsUpdate(binding.switchWakeWord.isChecked, chipWord)
             Toast.makeText(this, "Palabra activa: \"$chipWord\"", Toast.LENGTH_SHORT).show()
         }
 
@@ -160,19 +121,12 @@ class MainActivity : AppCompatActivity() {
         binding.chipVideo.setOnClickListener { setWordFromChip("Video") }
     }
 
-    private fun sendSettingsUpdate(
-        requireWake: Boolean,
-        customWord: String,
-        smartSleep: Boolean = true,
-        btSco: Boolean = true
-    ) {
+    private fun sendSettingsUpdate(requireWake: Boolean, customWord: String) {
         if (ReelVoiceForegroundService.isServiceRunning) {
             val updateIntent = Intent(this, ReelVoiceForegroundService::class.java).apply {
                 action = ReelVoiceForegroundService.ACTION_UPDATE_SETTINGS
                 putExtra(ReelVoiceForegroundService.EXTRA_REQUIRE_WAKE_WORD, requireWake)
                 putExtra(ReelVoiceForegroundService.EXTRA_CUSTOM_WAKE_WORD, customWord)
-                putExtra(ReelVoiceForegroundService.EXTRA_ENABLE_SMART_SLEEP, smartSleep)
-                putExtra(ReelVoiceForegroundService.EXTRA_ENABLE_BT_SCO, btSco)
             }
             startService(updateIntent)
         }

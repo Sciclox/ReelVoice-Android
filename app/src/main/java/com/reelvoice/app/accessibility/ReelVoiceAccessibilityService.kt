@@ -23,16 +23,6 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
 
         val instance: ReelVoiceAccessibilityService?
             get() = instanceRef?.get()
-
-        private val TARGET_VIDEO_APPS = setOf(
-            "com.zhiliaoapp.musically",      // TikTok Global
-            "com.ss.android.ugc.trill",      // TikTok Asia
-            "com.instagram.android",         // Instagram
-            "com.google.android.youtube",    // YouTube Shorts
-            "com.facebook.katana",           // Facebook
-            "com.facebook.lite",             // Facebook Lite
-            "com.reelvoice.scroll"           // ReelVoice Settings
-        )
     }
 
     override fun onServiceConnected() {
@@ -42,11 +32,7 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val packageName = event.packageName?.toString() ?: return
-            val isTarget = TARGET_VIDEO_APPS.contains(packageName)
-            ReelVoiceForegroundService.instance?.onForegroundAppChanged(packageName, isTarget)
-        }
+        // Funcionamiento global en cualquier app sin restricciones de ventana
     }
 
     override fun onInterrupt() {
