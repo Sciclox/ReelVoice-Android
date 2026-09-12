@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Deep Obsidian background -->
+    <path
+        android:pathData="M0,0 h108 v108 h-108 z"
+        android:fillColor="#0B0E14"/>
+    <!-- Neon Radial Glow -->
+    <path
+        android:pathData="M54,54 m-42,0 a42,42 0,1 1,84 0 a42,42 0,1 1,-84 0"
+        android:fillColor="#2200F0FF"/>
+</vector>
