@@ -34,6 +34,8 @@ class ReelVoiceForegroundService : Service() {
         const val ACTION_STOP = "ACTION_STOP_FOREGROUND"
         const val ACTION_PAUSE_MIC = "ACTION_PAUSE_MIC"
         const val ACTION_RESUME_MIC = "ACTION_RESUME_MIC"
+        const val ACTION_UPDATE_SETTINGS = "ACTION_UPDATE_SETTINGS"
+        const val EXTRA_REQUIRE_WAKE_WORD = "EXTRA_REQUIRE_WAKE_WORD"
 
         var isServiceRunning = false
             private set
@@ -75,18 +77,28 @@ class ReelVoiceForegroundService : Service() {
                 voiceManager?.resumeListening()
                 updateNotification()
             }
+            ACTION_UPDATE_SETTINGS -> {
+                val requireWake = intent.getBooleanExtra(EXTRA_REQUIRE_WAKE_WORD, true)
+                voiceManager?.requireWakeWord = requireWake
+                Log.d(TAG, "Configuración actualizada: requireWakeWord = $requireWake")
+            }
         }
         return START_STICKY
     }
 
     private fun initVoiceRecognition() {
+        val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
+        val requireWake = prefs.getBoolean("pref_wake_word", true)
+
         voiceManager = VoiceRecognitionManager(
             context = this,
             onCommandDetected = { cmd -> handleCommand(cmd) },
             onStatusChanged = { isListening, msg ->
                 Log.d(TAG, "Estado de voz: $msg (Escuchando: $isListening)")
             }
-        )
+        ).apply {
+            requireWakeWord = requireWake
+        }
     }
 
     private fun handleCommand(command: VoiceCommand) {

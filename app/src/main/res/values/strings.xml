@@ -50,4 +50,10 @@
     <string name="toast_cmd_detected">Comando: %1$s</string>
     <string name="toast_accessibility_needed">Por favor activa el servicio de Accesibilidad de ReelVoice</string>
     <string name="toast_overlay_needed">Por favor concede el permiso para mostrar sobre otras aplicaciones</string>
+
+    <!-- Wake Word / Anti-falsos -->
+    <string name="title_wake_word_mode">Modo Seguro Antifalsos</string>
+    <string name="desc_wake_word_mode">Requiere decir \"Reel\" antes del comando (ej: \"Reel baja\", \"Reel like\") para evitar que el audio del video active gestos por accidente.</string>
+    <string name="wake_word_active_hint">Palabra clave: Di \"Reel baja\", \"Reel sube\", \"Reel like\"</string>
+    <string name="wake_word_direct_hint">Modo directo: Di simplemente \"baja\" o \"sube\"</string>
 </resources>

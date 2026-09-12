@@ -77,6 +77,34 @@ class MainActivity : AppCompatActivity() {
         binding.btnToggleMasterService.setOnClickListener {
             toggleMasterService()
         }
+
+        val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
+        val initialWake = prefs.getBoolean("pref_wake_word", true)
+        binding.switchWakeWord.isChecked = initialWake
+        updateWakeWordHint(initialWake)
+
+        binding.switchWakeWord.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("pref_wake_word", isChecked).apply()
+            updateWakeWordHint(isChecked)
+
+            if (ReelVoiceForegroundService.isServiceRunning) {
+                val updateIntent = Intent(this, ReelVoiceForegroundService::class.java).apply {
+                    action = ReelVoiceForegroundService.ACTION_UPDATE_SETTINGS
+                    putExtra(ReelVoiceForegroundService.EXTRA_REQUIRE_WAKE_WORD, isChecked)
+                }
+                startService(updateIntent)
+            }
+        }
+    }
+
+    private fun updateWakeWordHint(isWakeWordActive: Boolean) {
+        if (isWakeWordActive) {
+            binding.tvWakeWordHint.text = getString(R.string.wake_word_active_hint)
+            binding.tvWakeWordHint.setTextColor(getColor(R.color.neon_cyan))
+        } else {
+            binding.tvWakeWordHint.text = getString(R.string.wake_word_direct_hint)
+            binding.tvWakeWordHint.setTextColor(getColor(R.color.neon_yellow))
+        }
     }
 
     private fun updateUiState() {

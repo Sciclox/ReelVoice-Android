@@ -34,6 +34,9 @@ class VoiceRecognitionManager(
         private const val COMMAND_COOLDOWN_MS = 550L // Cooldown ágil para navegación rápida
     }
 
+    var requireWakeWord: Boolean = true
+    private var wakeWordWindowUntil: Long = 0L
+
     private var speechRecognizer: SpeechRecognizer? = null
     private var isRunning = false
     private var isPausedByUser = false
@@ -199,34 +202,71 @@ class VoiceRecognitionManager(
     }
 
     private fun parseCommand(text: String): VoiceCommand {
+        val now = System.currentTimeMillis()
+        val hasWakeWord = text.contains("reel") ||
+                text.contains("ril") ||
+                text.contains("oye reel") ||
+                text.contains("hey reel") ||
+                text.contains("ok reel")
+
+        if (hasWakeWord) {
+            // Abre una ventana de escucha de 3.5 segundos si la palabra clave se dijo
+            wakeWordWindowUntil = now + 3500L
+        }
+
+        // Si el Modo Seguro está activado y no hay palabra clave ni estamos en la ventana de escucha:
+        if (requireWakeWord && !hasWakeWord && now > wakeWordWindowUntil) {
+            return VoiceCommand.UNKNOWN
+        }
+
         val words = text.split(" ").filter { it.isNotBlank() }
 
         // 1. Detección rápida por palabras individuales
         for (w in words) {
+            if (w == "reel" || w == "ril") continue // Ignorar la palabra clave
+
             when (w) {
                 // Siguiente
                 "baja", "bajar", "baje", "sig", "siguiente", "next", "otro", "otra", "pasa", "pasar",
-                "cambia", "cambiar", "dale", "abajo", "avanza" -> return VoiceCommand.NEXT
+                "cambia", "cambiar", "dale", "abajo", "avanza" -> {
+                    wakeWordWindowUntil = 0L
+                    return VoiceCommand.NEXT
+                }
 
                 // Anterior
                 "sube", "subir", "suba", "atras", "anterior", "arriba", "regresa", "regresar",
-                "retrocede", "retroceder", "vuelve", "volver", "back", "ant" -> return VoiceCommand.PREVIOUS
+                "retrocede", "retroceder", "vuelve", "volver", "back", "ant" -> {
+                    wakeWordWindowUntil = 0L
+                    return VoiceCommand.PREVIOUS
+                }
 
                 // Like (incluyendo fonética común como 'laik', 'laic')
-                "like", "laik", "laic", "layk", "lay", "leik", "megusta", "corazon", "fav", "love" -> return VoiceCommand.LIKE
+                "like", "laik", "laic", "layk", "lay", "leik", "megusta", "corazon", "fav", "love" -> {
+                    wakeWordWindowUntil = 0L
+                    return VoiceCommand.LIKE
+                }
 
                 // Pausa / Play
-                "pausa", "pausar", "para", "parar", "stop", "alto", "espera", "quieto", "detente", "play" -> return VoiceCommand.PAUSE
+                "pausa", "pausar", "para", "parar", "stop", "alto", "espera", "quieto", "detente", "play" -> {
+                    wakeWordWindowUntil = 0L
+                    return VoiceCommand.PAUSE
+                }
             }
         }
 
         // 2. Detección por subfrases compuestas
-        return when {
+        val cmd = when {
             text.contains("me gusta") || text.contains("dar like") -> VoiceCommand.LIKE
             text.contains("siguiente video") || text.contains("proximo video") || text.contains("pasa al otro") -> VoiceCommand.NEXT
             text.contains("video anterior") || text.contains("vuelve atras") || text.contains("ve atras") -> VoiceCommand.PREVIOUS
             text.contains("pon pausa") || text.contains("ponle play") || text.contains("quita la pausa") -> VoiceCommand.PAUSE
             else -> VoiceCommand.UNKNOWN
         }
+
+        if (cmd != VoiceCommand.UNKNOWN) {
+            wakeWordWindowUntil = 0L
+        }
+
+        return cmd
     }
 }
