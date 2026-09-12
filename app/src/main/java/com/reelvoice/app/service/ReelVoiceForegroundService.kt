@@ -46,7 +46,8 @@ class ReelVoiceForegroundService : Service() {
     }
 
     private var voiceManager: VoiceRecognitionManager? = null
-    private var isMicActive = true
+    private var isMicActive = false
+    private var currentStatusMessage = "Iniciando reconocimiento..."
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -70,13 +71,12 @@ class ReelVoiceForegroundService : Service() {
             }
             ACTION_PAUSE_MIC -> {
                 isMicActive = false
+                currentStatusMessage = "Micrófono en pausa. Toca para reanudar."
                 voiceManager?.pauseListening()
                 updateNotification()
             }
             ACTION_RESUME_MIC -> {
-                isMicActive = true
                 voiceManager?.resumeListening()
-                updateNotification()
             }
             ACTION_UPDATE_SETTINGS -> {
                 val requireWake = intent.getBooleanExtra(EXTRA_REQUIRE_WAKE_WORD, true)
@@ -102,6 +102,7 @@ class ReelVoiceForegroundService : Service() {
             onStatusChanged = { isListening, msg ->
                 Log.d(TAG, "Estado de voz: $msg (Escuchando: $isListening)")
                 isMicActive = isListening
+                currentStatusMessage = msg
                 updateNotification()
             }
         ).apply {
@@ -161,7 +162,15 @@ class ReelVoiceForegroundService : Service() {
 
     private fun startForegroundWithNotification() {
         val notification = buildNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun updateNotification() {
@@ -201,7 +210,7 @@ class ReelVoiceForegroundService : Service() {
         val contentText = if (isMicActive) {
             getString(R.string.notif_text)
         } else {
-            "Micrófono en pausa. Toca para reanudar."
+            currentStatusMessage
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)

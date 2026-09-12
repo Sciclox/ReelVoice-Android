@@ -1,6 +1,7 @@
 package com.reelvoice.app.voice
 
 import android.content.Context
+import android.content.res.AssetManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -9,8 +10,7 @@ import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
-import org.vosk.android.StorageService
-import java.io.IOException
+import java.io.File
 import java.util.Locale
 
 enum class VoiceCommand {
@@ -94,13 +94,21 @@ class VoiceRecognitionManager(
     private fun loadModelAndStart() {
         if (isModelLoading) return
         isModelLoading = true
-        onStatusChanged(false, "Iniciando motor offline...")
+        onStatusChanged(false, "Cargando motor offline...")
 
-        StorageService.unpack(
-            context,
-            "model-es",
-            "model",
-            { loadedModel: Model ->
+        Thread {
+            try {
+                val modelDir = File(context.filesDir, "model-es")
+                val testFile = File(modelDir, "am/final.mdl")
+
+                if (!testFile.exists() || testFile.length() < 1000000L) {
+                    Log.i(TAG, "Extrayendo modelo offline a ${modelDir.absolutePath}...")
+                    copyAssetFolder(context.assets, "model-es", modelDir)
+                }
+
+                Log.i(TAG, "Instanciando Model Vosk en ${modelDir.absolutePath}...")
+                val loadedModel = Model(modelDir.absolutePath)
+
                 mainHandler.post {
                     model = loadedModel
                     isModelLoading = false
@@ -109,15 +117,34 @@ class VoiceRecognitionManager(
                         startSpeechService()
                     }
                 }
-            },
-            { exception: IOException ->
+            } catch (e: Exception) {
+                Log.e(TAG, "Error crítico cargando modelo Vosk: ${e.message}", e)
                 mainHandler.post {
                     isModelLoading = false
-                    Log.e(TAG, "Error al desempaquetar el modelo Vosk: ${exception.message}", exception)
-                    onStatusChanged(false, "Error al cargar modelo")
+                    onStatusChanged(false, "Error: ${e.message}")
                 }
             }
-        )
+        }.start()
+    }
+
+    private fun copyAssetFolder(assetManager: AssetManager, fromAssetPath: String, toDir: File) {
+        val files = assetManager.list(fromAssetPath) ?: return
+        if (!toDir.exists()) toDir.mkdirs()
+
+        for (file in files) {
+            val subAsset = if (fromAssetPath.isEmpty()) file else "$fromAssetPath/$file"
+            val destFile = File(toDir, file)
+            val subList = assetManager.list(subAsset)
+            if (subList != null && subList.isNotEmpty()) {
+                copyAssetFolder(assetManager, subAsset, destFile)
+            } else {
+                assetManager.open(subAsset).use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+        }
     }
 
     private fun startSpeechService() {
@@ -128,12 +155,17 @@ class VoiceRecognitionManager(
 
         try {
             stopSpeechServiceInternal()
+            Log.i(TAG, "Iniciando SpeechService con AudioRecord a ${SAMPLE_RATE.toInt()}Hz...")
             val recognizer = Recognizer(currentModel, SAMPLE_RATE)
-            speechService = SpeechService(recognizer, SAMPLE_RATE).apply {
-                startListening(createRecognitionListener())
+            val service = SpeechService(recognizer, SAMPLE_RATE)
+            speechService = service
+            val started = service.startListening(createRecognitionListener())
+            Log.i(TAG, "SpeechService startListening resultado: $started")
+            if (started) {
+                onStatusChanged(true, "Escuchando continuamente")
+            } else {
+                onStatusChanged(false, "No se pudo activar el micrófono")
             }
-            onStatusChanged(true, "Escuchando continuamente")
-            Log.i(TAG, "SpeechService de Vosk iniciado con AudioRecord a ${SAMPLE_RATE.toInt()}Hz.")
         } catch (e: Exception) {
             Log.e(TAG, "Error al iniciar SpeechService: ${e.message}", e)
             onStatusChanged(false, "Error de micrófono: ${e.message}")
