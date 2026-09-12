@@ -93,8 +93,9 @@ class ReelVoiceForegroundService : Service() {
         lastDetectedCommand = command
         Log.i(TAG, "Ejecutando comando de voz: $command")
 
-        // 1. Dar feedback visual a la burbuja flotante
+        // 1. Dar feedback visual a la burbuja flotante y vibración sutil
         FloatingBubbleService.updateBubbleCommand(this, command)
+        triggerHapticFeedback()
 
         // 2. Ejecutar gesto a través del servicio de accesibilidad
         val accessibility = ReelVoiceAccessibilityService.instance
@@ -109,6 +110,20 @@ class ReelVoiceForegroundService : Service() {
             VoiceCommand.LIKE -> accessibility.sendLike()
             VoiceCommand.PAUSE -> accessibility.togglePause()
             VoiceCommand.UNKNOWN -> {}
+        }
+    }
+
+    private fun triggerHapticFeedback() {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(android.os.VibrationEffect.createOneShot(40, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(40)
+            }
+        } catch (e: Exception) {
+            // Ignorar excepciones de vibrador
         }
     }
 

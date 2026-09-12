@@ -31,7 +31,7 @@ class VoiceRecognitionManager(
 
     companion object {
         private const val TAG = "VoiceRecognitionMgr"
-        private const val COMMAND_COOLDOWN_MS = 900L // Evita disparos duplicados
+        private const val COMMAND_COOLDOWN_MS = 550L // Cooldown ágil para navegación rápida
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -42,11 +42,14 @@ class VoiceRecognitionManager(
 
     private val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale("es", "ES").toString())
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "es-ES")
-        putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, "es-ES")
+        val defaultLocale = Locale.getDefault().toLanguageTag()
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, defaultLocale)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, defaultLocale)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 350L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 350L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 150L)
     }
 
     fun startListening() {
@@ -177,8 +180,8 @@ class VoiceRecognitionManager(
         }
 
         for (phrase in matches) {
-            val normalized = phrase.lowercase(Locale.ROOT).trim()
-            Log.d(TAG, "Frase escuchada: '$normalized'")
+            val normalized = normalizeText(phrase)
+            Log.d(TAG, "Frase escuchada: '$phrase' -> Normalizada: '$normalized'")
 
             val command = parseCommand(normalized)
             if (command != VoiceCommand.UNKNOWN) {
@@ -189,42 +192,40 @@ class VoiceRecognitionManager(
         }
     }
 
+    private fun normalizeText(input: String): String {
+        val temp = java.text.Normalizer.normalize(input.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+        val clean = Regex("\\p{InCombiningDiacriticalMarks}+").replace(temp, "")
+        return clean.replace(Regex("[^a-z0-9\\s]"), " ").trim()
+    }
+
     private fun parseCommand(text: String): VoiceCommand {
+        val words = text.split(" ").filter { it.isNotBlank() }
+
+        // 1. Detección rápida por palabras individuales
+        for (w in words) {
+            when (w) {
+                // Siguiente
+                "baja", "bajar", "baje", "sig", "siguiente", "next", "otro", "otra", "pasa", "pasar",
+                "cambia", "cambiar", "dale", "abajo", "avanza" -> return VoiceCommand.NEXT
+
+                // Anterior
+                "sube", "subir", "suba", "atras", "anterior", "arriba", "regresa", "regresar",
+                "retrocede", "retroceder", "vuelve", "volver", "back", "ant" -> return VoiceCommand.PREVIOUS
+
+                // Like (incluyendo fonética común como 'laik', 'laic')
+                "like", "laik", "laic", "layk", "lay", "leik", "megusta", "corazon", "fav", "love" -> return VoiceCommand.LIKE
+
+                // Pausa / Play
+                "pausa", "pausar", "para", "parar", "stop", "alto", "espera", "quieto", "detente", "play" -> return VoiceCommand.PAUSE
+            }
+        }
+
+        // 2. Detección por subfrases compuestas
         return when {
-            // Siguiente Reel
-            text.contains("siguiente") ||
-            text.contains("baja") ||
-            text.contains("next") ||
-            text.contains("abajo") ||
-            text.contains("otro") ||
-            text.contains("avanza") ||
-            text.contains("desliza") -> VoiceCommand.NEXT
-
-            // Reel Anterior
-            text.contains("atrás") ||
-            text.contains("atras") ||
-            text.contains("sube") ||
-            text.contains("anterior") ||
-            text.contains("arriba") ||
-            text.contains("back") ||
-            text.contains("regresa") -> VoiceCommand.PREVIOUS
-
-            // Dar Like
-            text.contains("like") ||
-            text.contains("me gusta") ||
-            text.contains("megusta") ||
-            text.contains("corazón") ||
-            text.contains("corazon") -> VoiceCommand.LIKE
-
-            // Pausa / Play
-            text.contains("pausa") ||
-            text.contains("para") ||
-            text.contains("parar") ||
-            text.contains("alto") ||
-            text.contains("play") ||
-            text.contains("stop") ||
-            text.contains("reproduce") -> VoiceCommand.PAUSE
-
+            text.contains("me gusta") || text.contains("dar like") -> VoiceCommand.LIKE
+            text.contains("siguiente video") || text.contains("proximo video") || text.contains("pasa al otro") -> VoiceCommand.NEXT
+            text.contains("video anterior") || text.contains("vuelve atras") || text.contains("ve atras") -> VoiceCommand.PREVIOUS
+            text.contains("pon pausa") || text.contains("ponle play") || text.contains("quita la pausa") -> VoiceCommand.PAUSE
             else -> VoiceCommand.UNKNOWN
         }
     }

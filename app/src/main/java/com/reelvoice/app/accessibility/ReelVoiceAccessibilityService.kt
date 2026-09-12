@@ -62,15 +62,16 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         val height = metrics.heightPixels.toFloat()
 
         val startX = width * 0.5f
-        val startY = height * 0.78f
+        val startY = height * 0.75f
         val endX = width * 0.5f
-        val endY = height * 0.22f
+        val endY = height * 0.20f
 
-        return performSwipe(startX, startY, endX, endY, duration = 260)
+        return performSwipe(startX, startY, endX, endY, duration = 200)
     }
 
     /**
      * Simula un deslizamiento hacia abajo (Swipe Down) para volver al Reel anterior.
+     * Inicia a 35% de la altura para no tocar las pestañas o buscador superior de TikTok/Instagram.
      */
     fun scrollPrevious(): Boolean {
         val metrics = resources.displayMetrics
@@ -78,15 +79,16 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         val height = metrics.heightPixels.toFloat()
 
         val startX = width * 0.5f
-        val startY = height * 0.25f
+        val startY = height * 0.35f
         val endX = width * 0.5f
-        val endY = height * 0.80f
+        val endY = height * 0.85f
 
-        return performSwipe(startX, startY, endX, endY, duration = 260)
+        return performSwipe(startX, startY, endX, endY, duration = 200)
     }
 
     /**
-     * Simula un doble toque (Double Tap) en el centro de la pantalla para dar "Like".
+     * Simula un doble toque (Double Tap) real en el centro de la pantalla para dar "Like".
+     * Ambos trazos tienen willContinue = false para que el dedo se levante entre toques.
      */
     fun sendLike(): Boolean {
         val metrics = resources.displayMetrics
@@ -96,8 +98,8 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         val path1 = Path().apply { moveTo(centerX, centerY) }
         val path2 = Path().apply { moveTo(centerX, centerY) }
 
-        val stroke1 = GestureDescription.StrokeDescription(path1, 0, 50, true)
-        val stroke2 = GestureDescription.StrokeDescription(path2, 120, 50, false)
+        val stroke1 = GestureDescription.StrokeDescription(path1, 0, 45, false)
+        val stroke2 = GestureDescription.StrokeDescription(path2, 110, 45, false)
 
         val gesture = GestureDescription.Builder()
             .addStroke(stroke1)
@@ -123,7 +125,7 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         val centerY = metrics.heightPixels * 0.5f
 
         val path = Path().apply { moveTo(centerX, centerY) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 60)
+        val stroke = GestureDescription.StrokeDescription(path, 0, 50, false)
 
         val gesture = GestureDescription.Builder()
             .addStroke(stroke)
