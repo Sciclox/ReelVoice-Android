@@ -2,6 +2,8 @@ package com.reelvoice.app.voice
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -51,10 +53,27 @@ class VoiceRecognitionManager(
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, defaultLocale)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, defaultLocale)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 350L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 350L)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 150L)
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+        putExtra("android.speech.extra.DICTATION_MODE", true)
+    }
+
+    private fun muteSystemSounds(mute: Boolean) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val direction = if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
+                audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, direction, 0)
+                audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, direction, 0)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.setStreamMute(AudioManager.STREAM_SYSTEM, mute)
+                @Suppress("DEPRECATION")
+                audioManager.setStreamMute(AudioManager.STREAM_NOTIFICATION, mute)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo ajustar volumen para silenciar el beep: ${e.message}")
+        }
     }
 
     fun startListening() {
@@ -70,6 +89,7 @@ class VoiceRecognitionManager(
     fun pauseListening() {
         isPausedByUser = true
         stopInternal()
+        muteSystemSounds(false)
         onStatusChanged(false, "Micrófono en pausa")
     }
 
@@ -89,6 +109,7 @@ class VoiceRecognitionManager(
         isPausedByUser = false
         mainHandler.post {
             stopInternal()
+            muteSystemSounds(false)
         }
     }
 
@@ -103,20 +124,28 @@ class VoiceRecognitionManager(
 
         try {
             if (speechRecognizer == null) {
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                speechRecognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+                    Log.i(TAG, "Usando OnDeviceSpeechRecognizer (Silencioso y local)")
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                }.apply {
                     setRecognitionListener(createRecognitionListener())
                 }
             }
+            muteSystemSounds(true)
             speechRecognizer?.startListening(recognizerIntent)
             onStatusChanged(true, "Escuchando comandos...")
         } catch (e: Exception) {
             Log.e(TAG, "Error al iniciar SpeechRecognizer: ${e.message}")
+            stopInternal()
             scheduleRestart(1000)
         }
     }
 
     private fun stopInternal() {
         try {
+            muteSystemSounds(false)
             speechRecognizer?.stopListening()
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
@@ -133,8 +162,15 @@ class VoiceRecognitionManager(
         mainHandler.removeCallbacksAndMessages(null)
         mainHandler.postDelayed({
             if (isRunning && !isPausedByUser) {
-                stopInternal()
-                initAndStartRecognizer()
+                try {
+                    speechRecognizer?.cancel()
+                    muteSystemSounds(true)
+                    speechRecognizer?.startListening(recognizerIntent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error al reiniciar escucha, recreando recognizer: ${e.message}")
+                    stopInternal()
+                    initAndStartRecognizer()
+                }
             }
         }, delayMs)
     }
