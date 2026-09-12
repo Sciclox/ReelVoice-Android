@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
-        val initialWake = prefs.getBoolean("pref_wake_word", true)
+        val initialWake = prefs.getBoolean("pref_wake_word", false)
         val initialWord = prefs.getString("pref_custom_wake_word", "Reel") ?: "Reel"
 
         binding.switchWakeWord.isChecked = initialWake

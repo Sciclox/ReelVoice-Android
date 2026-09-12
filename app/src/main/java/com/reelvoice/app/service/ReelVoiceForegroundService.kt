@@ -93,7 +93,7 @@ class ReelVoiceForegroundService : Service() {
 
     private fun initVoiceRecognition() {
         val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
-        val requireWake = prefs.getBoolean("pref_wake_word", true)
+        val requireWake = prefs.getBoolean("pref_wake_word", false)
         val customWord = prefs.getString("pref_custom_wake_word", "reel") ?: "reel"
 
         voiceManager = VoiceRecognitionManager(

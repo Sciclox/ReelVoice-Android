@@ -35,11 +35,13 @@ class VoiceRecognitionManager(
 
     companion object {
         private const val TAG = "VoiceRecognitionMgr"
-        private const val COMMAND_COOLDOWN_MS = 1200L // 1.2s para evitar dobles saltos
-        private const val EXTENDED_SILENCE_MS = 10000L // 10s de espera antes de que Google considere silencio
+        private const val COMMAND_COOLDOWN_MS = 1000L // 1s para evitar dobles saltos
+        private const val SILENCE_COMPLETE_MS = 750L // Respuesta ágil: 750ms tras finalizar de hablar
+        private const val SILENCE_POSSIBLY_COMPLETE_MS = 750L
+        private const val SILENCE_MINIMUM_MS = 1200L
     }
 
-    var requireWakeWord: Boolean = true
+    var requireWakeWord: Boolean = false
     var customWakeWord: String = "reel"
     private var wakeWordWindowUntil: Long = 0L
 
@@ -58,17 +60,17 @@ class VoiceRecognitionManager(
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
 
-        // 🌟 Opción 1: Extender ventanas de silencio para mantener la sesión abierta
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, EXTENDED_SILENCE_MS)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, EXTENDED_SILENCE_MS)
-        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, EXTENDED_SILENCE_MS)
-        putExtra("android.speech.extra.DICTATION_MODE", true)
+        // Ventanas de silencio ágiles para respuesta instantánea (< 500-750ms)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_COMPLETE_MS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_POSSIBLY_COMPLETE_MS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, SILENCE_MINIMUM_MS)
 
-        // Variantes de compatibilidad con versiones específicas de la app de Google
-        putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", EXTENDED_SILENCE_MS)
-        putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", EXTENDED_SILENCE_MS)
-        putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", EXTENDED_SILENCE_MS)
+        // Compatibilidad con versiones específicas de la app de Google
+        putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", SILENCE_COMPLETE_MS)
+        putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", SILENCE_POSSIBLY_COMPLETE_MS)
+        putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", SILENCE_MINIMUM_MS)
     }
 
     private fun muteSystemSounds(mute: Boolean) {
@@ -140,7 +142,14 @@ class VoiceRecognitionManager(
 
         try {
             if (speechRecognizer == null) {
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                speechRecognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+                    Log.i(TAG, "Iniciando OnDeviceSpeechRecognizer (Procesamiento local en el chip, latencia cero)")
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                } else {
+                    Log.i(TAG, "Iniciando SpeechRecognizer estándar")
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                }.apply {
                     setRecognitionListener(createRecognitionListener())
                 }
             }
@@ -149,7 +158,7 @@ class VoiceRecognitionManager(
         } catch (e: Exception) {
             Log.e(TAG, "Error al iniciar SpeechRecognizer: ${e.message}")
             stopInternal()
-            scheduleRestart(500)
+            scheduleRestart(400)
         }
     }
 
@@ -171,15 +180,8 @@ class VoiceRecognitionManager(
         mainHandler.removeCallbacksAndMessages(null)
         mainHandler.postDelayed({
             if (isRunning && !isPausedByUser) {
-                try {
-                    // Intento de reinicio suave para no destruir ni liberar la conexión Binder si es posible
-                    speechRecognizer?.cancel()
-                    speechRecognizer?.startListening(recognizerIntent)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Reinicio suave no disponible, reiniciando instancia: ${e.message}")
-                    stopInternal()
-                    initAndStartRecognizer()
-                }
+                stopInternal()
+                initAndStartRecognizer()
             }
         }, delayMs)
     }
@@ -189,7 +191,7 @@ class VoiceRecognitionManager(
             override fun onReadyForSpeech(params: Bundle?) {
                 Log.d(TAG, "Listo para escuchar")
                 isCommandExecutedInCurrentSession = false
-                onStatusChanged(true, "Escuchando continuamente")
+                onStatusChanged(true, "Escuchando activamente")
             }
 
             override fun onBeginningOfSpeech() {
@@ -202,20 +204,25 @@ class VoiceRecognitionManager(
             override fun onBufferReceived(buffer: ByteArray?) {}
 
             override fun onEndOfSpeech() {
-                Log.d(TAG, "Fin del fragmento de voz")
+                Log.d(TAG, "Fin de fragmento de voz")
             }
 
             override fun onError(error: Int) {
-                Log.d(TAG, "Código de evento del recognizer: $error")
+                Log.d(TAG, "Evento onError del reconocedor: $error")
                 isCommandExecutedInCurrentSession = false
-                // Reconexión ultra rápida (100ms) para minimizar tiempo de micrófono liberado
-                scheduleRestart(100)
+                // Reanudar con delay adaptativo para evitar RECOGNIZER_BUSY
+                val restartDelay = when (error) {
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_NO_MATCH -> 150L
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY, SpeechRecognizer.ERROR_CLIENT -> 350L
+                    else -> 200L
+                }
+                scheduleRestart(restartDelay)
             }
 
             override fun onResults(results: Bundle?) {
                 processMatches(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
                 isCommandExecutedInCurrentSession = false
-                scheduleRestart(100)
+                scheduleRestart(120L)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
@@ -341,52 +348,62 @@ class VoiceRecognitionManager(
             return VoiceCommand.UNKNOWN
         }
 
-        // 1. Detección rápida por palabras individuales (incluye variantes fonéticas a distancia)
+        // 1. Detección prioritaria por subfrases compuestas (evita que "dale" en "dale like" salte a NEXT)
+        val compoundCmd = when {
+            text.contains("dale like") || text.contains("dar like") || text.contains("me gusta") ||
+            text.contains("pon like") || text.contains("deja tu like") || text.contains("deja like") -> VoiceCommand.LIKE
+
+            text.contains("siguiente video") || text.contains("proximo video") || text.contains("pasa al otro") ||
+            text.contains("pasa el video") || text.contains("pasa al siguiente") || text.contains("salta el video") -> VoiceCommand.NEXT
+
+            text.contains("video anterior") || text.contains("vuelve atras") || text.contains("ve atras") ||
+            text.contains("al anterior") || text.contains("el anterior") -> VoiceCommand.PREVIOUS
+
+            text.contains("pon pausa") || text.contains("ponle play") || text.contains("quita la pausa") ||
+            text.contains("dale play") || text.contains("dale pausa") || text.contains("pausa el video") -> VoiceCommand.PAUSE
+
+            else -> VoiceCommand.UNKNOWN
+        }
+
+        if (compoundCmd != VoiceCommand.UNKNOWN) {
+            wakeWordWindowUntil = 0L
+            return compoundCmd
+        }
+
+        // 2. Detección rápida por palabras individuales (incluye variantes fonéticas a distancia)
         for (w in words) {
-            if (isFuzzyMatch(w, wakeTarget) || (wakeTarget == "reel" && (w == "ril" || w == "riel" || w == "real"))) continue // Ignorar la palabra clave
+            if (isFuzzyMatch(w, wakeTarget) || (wakeTarget == "reel" && (w == "ril" || w == "riel" || w == "real" || w == "rin"))) continue // Ignorar la palabra clave
 
             when (w) {
                 // Siguiente
-                "baja", "bajar", "baje", "bajo", "vaja", "vaya", "aja", "baha", "maja", "sig",
-                "siguiente", "next", "otro", "otra", "pasa", "pasar", "cambia", "cambiar", "dale", "abajo", "avanza" -> {
+                "baja", "bajar", "bajale", "baje", "bajo", "vaja", "vaya", "aja", "baha", "maja", "sig",
+                "siguiente", "next", "otro", "otra", "pasa", "pasar", "pasalo", "pasala", "pasale",
+                "cambia", "cambiar", "dale", "abajo", "avanza", "avanzar", "desliza", "deslizar", "continua", "continuar" -> {
                     wakeWordWindowUntil = 0L
                     return VoiceCommand.NEXT
                 }
 
                 // Anterior
-                "sube", "subir", "suba", "suve", "tube", "supe", "shube", "sub", "atras",
+                "sube", "subir", "subele", "suba", "suve", "tube", "supe", "shube", "sub", "atras",
                 "anterior", "arriba", "regresa", "regresar", "retrocede", "retroceder", "vuelve", "volver", "back", "ant" -> {
                     wakeWordWindowUntil = 0L
                     return VoiceCommand.PREVIOUS
                 }
 
                 // Like (incluyendo fonética común como 'laik', 'laic')
-                "like", "laik", "laic", "layk", "lay", "leik", "megusta", "corazon", "fav", "love" -> {
+                "like", "laik", "laic", "layk", "lay", "leik", "megusta", "corazon", "fav", "love", "encanta" -> {
                     wakeWordWindowUntil = 0L
                     return VoiceCommand.LIKE
                 }
 
                 // Pausa / Play
-                "pausa", "pausar", "para", "parar", "stop", "alto", "espera", "quieto", "detente", "play" -> {
+                "pausa", "pausar", "pausalo", "pausale", "para", "parar", "stop", "alto", "espera", "quieto", "detente", "play", "reproduce", "sigue" -> {
                     wakeWordWindowUntil = 0L
                     return VoiceCommand.PAUSE
                 }
             }
         }
 
-        // 2. Detección por subfrases compuestas
-        val cmd = when {
-            text.contains("me gusta") || text.contains("dar like") -> VoiceCommand.LIKE
-            text.contains("siguiente video") || text.contains("proximo video") || text.contains("pasa al otro") -> VoiceCommand.NEXT
-            text.contains("video anterior") || text.contains("vuelve atras") || text.contains("ve atras") -> VoiceCommand.PREVIOUS
-            text.contains("pon pausa") || text.contains("ponle play") || text.contains("quita la pausa") -> VoiceCommand.PAUSE
-            else -> VoiceCommand.UNKNOWN
-        }
-
-        if (cmd != VoiceCommand.UNKNOWN) {
-            wakeWordWindowUntil = 0L
-        }
-
-        return cmd
+        return VoiceCommand.UNKNOWN
     }
 }

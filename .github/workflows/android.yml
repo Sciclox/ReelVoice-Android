@@ -26,14 +26,6 @@ jobs:
       - name: Grant Execute Permission to Gradlew
         run: chmod +x gradlew
 
-      - name: Download Vosk Spanish Model
-        run: |
-          mkdir -p app/src/main/assets/model-es
-          wget -q https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip -O model.zip
-          unzip -q model.zip
-          cp -r vosk-model-small-es-0.42/* app/src/main/assets/model-es/
-          rm -rf model.zip vosk-model-small-es-0.42
-
       - name: Build APK with Gradle
         run: ./gradlew assembleDebug --stacktrace
 
