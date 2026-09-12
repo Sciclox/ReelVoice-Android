@@ -18,14 +18,18 @@ enum class VoiceCommand {
     PREVIOUS,
     LIKE,
     PAUSE,
+    VOLUME_UP,
+    VOLUME_DOWN,
+    MUTE,
+    COMMENTS,
+    FAVORITE,
     UNKNOWN
 }
 
 /**
  * Gestor del motor de reconocimiento de voz continuo de Google SpeechRecognizer.
- * Configurado con la Opción 1: Ventanas de silencio extendidas (10s) y modo dictado
- * para mantener el micrófono abierto de forma continua y estabilizar el indicador verde
- * de privacidad de Android 12+, evitando reinicios rápidos cada 2-3 segundos.
+ * Configurado con soporte On-Device (en el chip), ventanas de latencia inmediata (750ms)
+ * y enrutamiento Bluetooth SCO para micrófonos de auriculares inalámbricos.
  */
 class VoiceRecognitionManager(
     private val context: Context,
@@ -43,6 +47,7 @@ class VoiceRecognitionManager(
 
     var requireWakeWord: Boolean = false
     var customWakeWord: String = "reel"
+    var enableBluetoothSco: Boolean = true
     private var wakeWordWindowUntil: Long = 0L
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -73,6 +78,28 @@ class VoiceRecognitionManager(
         putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", SILENCE_MINIMUM_MS)
     }
 
+    private fun setupBluetoothSco(enable: Boolean) {
+        if (!enableBluetoothSco && enable) return
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (enable) {
+                if (audioManager.isBluetoothScoAvailableOffCall && !audioManager.isBluetoothScoOn) {
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                    Log.i(TAG, "Bluetooth SCO activado para audífonos inalámbricos")
+                }
+            } else {
+                if (audioManager.isBluetoothScoOn) {
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.stopBluetoothSco()
+                    Log.i(TAG, "Bluetooth SCO detenido")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Excepción al configurar Bluetooth SCO: ${e.message}")
+        }
+    }
+
     private fun muteSystemSounds(mute: Boolean) {
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
@@ -95,6 +122,7 @@ class VoiceRecognitionManager(
         if (isRunning) return
         isRunning = true
         isPausedByUser = false
+        setupBluetoothSco(true)
         muteSystemSounds(true)
 
         mainHandler.post {
@@ -104,6 +132,7 @@ class VoiceRecognitionManager(
 
     fun pauseListening() {
         isPausedByUser = true
+        setupBluetoothSco(false)
         stopInternal()
         muteSystemSounds(false)
         onStatusChanged(false, "Micrófono en pausa")
@@ -114,6 +143,7 @@ class VoiceRecognitionManager(
             startListening()
         } else {
             isPausedByUser = false
+            setupBluetoothSco(true)
             muteSystemSounds(true)
             mainHandler.post {
                 initAndStartRecognizer()
@@ -124,6 +154,7 @@ class VoiceRecognitionManager(
     fun stopListening() {
         isRunning = false
         isPausedByUser = false
+        setupBluetoothSco(false)
         mainHandler.post {
             stopInternal()
             muteSystemSounds(false)
@@ -362,6 +393,23 @@ class VoiceRecognitionManager(
             text.contains("pon pausa") || text.contains("ponle play") || text.contains("quita la pausa") ||
             text.contains("dale play") || text.contains("dale pausa") || text.contains("pausa el video") -> VoiceCommand.PAUSE
 
+            // Comandos de Volumen
+            text.contains("sube volumen") || text.contains("subir volumen") || text.contains("mas volumen") ||
+            text.contains("aumenta volumen") || text.contains("subele al volumen") || text.contains("sube el volumen") -> VoiceCommand.VOLUME_UP
+
+            text.contains("baja volumen") || text.contains("bajar volumen") || text.contains("menos volumen") ||
+            text.contains("disminuye volumen") || text.contains("bajale al volumen") || text.contains("baja el volumen") -> VoiceCommand.VOLUME_DOWN
+
+            text.contains("quitar sonido") || text.contains("apaga sonido") || text.contains("sin sonido") ||
+            text.contains("pon silencio") || text.contains("quita el sonido") -> VoiceCommand.MUTE
+
+            // Comandos de Comentarios y Favoritos
+            text.contains("ver comentarios") || text.contains("abrir comentarios") || text.contains("abre comentarios") ||
+            text.contains("abre los comentarios") || text.contains("ver los comentarios") -> VoiceCommand.COMMENTS
+
+            text.contains("guardar video") || text.contains("guarda video") || text.contains("anadir a favoritos") ||
+            text.contains("pon en favoritos") || text.contains("guarda el video") || text.contains("guardar en favoritos") -> VoiceCommand.FAVORITE
+
             else -> VoiceCommand.UNKNOWN
         }
 
@@ -400,6 +448,24 @@ class VoiceRecognitionManager(
                 "pausa", "pausar", "pausalo", "pausale", "para", "parar", "stop", "alto", "espera", "quieto", "detente", "play", "reproduce", "sigue" -> {
                     wakeWordWindowUntil = 0L
                     return VoiceCommand.PAUSE
+                }
+
+                // Comentarios
+                "comentarios", "comentario" -> {
+                    wakeWordWindowUntil = 0L
+                    return VoiceCommand.COMMENTS
+                }
+
+                // Favoritos / Guardar
+                "favorito", "favoritos", "guardar", "guarda" -> {
+                    wakeWordWindowUntil = 0L
+                    return VoiceCommand.FAVORITE
+                }
+
+                // Silencio / Mute
+                "silencio", "mute" -> {
+                    wakeWordWindowUntil = 0L
+                    return VoiceCommand.MUTE
                 }
             }
         }

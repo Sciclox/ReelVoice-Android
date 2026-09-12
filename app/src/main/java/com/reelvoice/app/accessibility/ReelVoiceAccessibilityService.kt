@@ -2,17 +2,15 @@ package com.reelvoice.app.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.Intent
 import android.graphics.Path
-import android.os.Build
-import android.util.DisplayMetrics
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import com.reelvoice.app.service.ReelVoiceForegroundService
 import java.lang.ref.WeakReference
 
 /**
- * Servicio de Accesibilidad oficial para simular gestos táctiles (Scroll, Like, Pausa)
- * directamente sobre Instagram Reels, TikTok, YouTube Shorts y Facebook Reels.
+ * Servicio de Accesibilidad oficial para simular gestos táctiles (Scroll, Like, Pausa, Comentarios, Favorito)
+ * y detectar la aplicación en pantalla para Smart Sleep.
  */
 class ReelVoiceAccessibilityService : AccessibilityService() {
 
@@ -20,17 +18,21 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         private const val TAG = "ReelVoiceAccess"
         private var instanceRef: WeakReference<ReelVoiceAccessibilityService>? = null
 
-        /**
-         * Verifica si el servicio de accesibilidad está activo y enlazado.
-         */
         val isServiceActive: Boolean
             get() = instanceRef?.get() != null
 
-        /**
-         * Instancia activa del servicio para despachar gestos.
-         */
         val instance: ReelVoiceAccessibilityService?
             get() = instanceRef?.get()
+
+        private val TARGET_VIDEO_APPS = setOf(
+            "com.zhiliaoapp.musically",      // TikTok Global
+            "com.ss.android.ugc.trill",      // TikTok Asia
+            "com.instagram.android",         // Instagram
+            "com.google.android.youtube",    // YouTube Shorts
+            "com.facebook.katana",           // Facebook
+            "com.facebook.lite",             // Facebook Lite
+            "com.reelvoice.scroll"           // ReelVoice Settings
+        )
     }
 
     override fun onServiceConnected() {
@@ -40,7 +42,11 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // No necesitamos procesar eventos de ventana para mantener rendimiento óptimo.
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val packageName = event.packageName?.toString() ?: return
+            val isTarget = TARGET_VIDEO_APPS.contains(packageName)
+            ReelVoiceForegroundService.instance?.onForegroundAppChanged(packageName, isTarget)
+        }
     }
 
     override fun onInterrupt() {
@@ -55,7 +61,6 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
 
     /**
      * Simula un deslizamiento hacia arriba (Swipe Up) para pasar al siguiente Reel.
-     * Calibrado a 280ms y 44% de pantalla para evitar sobre-inercia (doble salto en ViewPager).
      */
     fun scrollNext(): Boolean {
         val metrics = resources.displayMetrics
@@ -72,7 +77,6 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
 
     /**
      * Simula un deslizamiento hacia abajo (Swipe Down) para volver al Reel anterior.
-     * Inicia a 35% de la altura para no tocar las pestañas o buscador superior de TikTok/Instagram.
      */
     fun scrollPrevious(): Boolean {
         val metrics = resources.displayMetrics
@@ -89,7 +93,6 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
 
     /**
      * Simula un doble toque (Double Tap) real en el centro de la pantalla para dar "Like".
-     * Ambos trazos tienen willContinue = false para que el dedo se levante entre toques.
      */
     fun sendLike(): Boolean {
         val metrics = resources.displayMetrics
@@ -125,19 +128,39 @@ class ReelVoiceAccessibilityService : AccessibilityService() {
         val centerX = metrics.widthPixels * 0.5f
         val centerY = metrics.heightPixels * 0.5f
 
-        val path = Path().apply { moveTo(centerX, centerY) }
+        return performTap(centerX, centerY)
+    }
+
+    /**
+     * Simula un toque en el botón lateral de Comentarios de TikTok / Instagram Reels.
+     */
+    fun openComments(): Boolean {
+        val metrics = resources.displayMetrics
+        val targetX = metrics.widthPixels * 0.92f
+        val targetY = metrics.heightPixels * 0.65f
+        return performTap(targetX, targetY)
+    }
+
+    /**
+     * Simula un toque en el botón lateral de Guardar / Favoritos de TikTok / Instagram Reels.
+     */
+    fun saveFavorite(): Boolean {
+        val metrics = resources.displayMetrics
+        val targetX = metrics.widthPixels * 0.92f
+        val targetY = metrics.heightPixels * 0.74f
+        return performTap(targetX, targetY)
+    }
+
+    private fun performTap(x: Float, y: Float): Boolean {
+        val path = Path().apply { moveTo(x, y) }
         val stroke = GestureDescription.StrokeDescription(path, 0, 50, false)
-
-        val gesture = GestureDescription.Builder()
-            .addStroke(stroke)
-            .build()
-
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
         return dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
-                Log.d(TAG, "Tap de pausa/play completado.")
+                Log.d(TAG, "Toque en ($x, $y) completado.")
             }
             override fun onCancelled(gestureDescription: GestureDescription?) {
-                Log.w(TAG, "Tap de pausa/play cancelado.")
+                Log.w(TAG, "Toque en ($x, $y) cancelado.")
             }
         }, null)
     }

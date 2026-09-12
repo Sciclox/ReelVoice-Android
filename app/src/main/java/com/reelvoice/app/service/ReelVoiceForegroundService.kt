@@ -37,6 +37,11 @@ class ReelVoiceForegroundService : Service() {
         const val ACTION_UPDATE_SETTINGS = "ACTION_UPDATE_SETTINGS"
         const val EXTRA_REQUIRE_WAKE_WORD = "EXTRA_REQUIRE_WAKE_WORD"
         const val EXTRA_CUSTOM_WAKE_WORD = "EXTRA_CUSTOM_WAKE_WORD"
+        const val EXTRA_ENABLE_SMART_SLEEP = "EXTRA_ENABLE_SMART_SLEEP"
+        const val EXTRA_ENABLE_BT_SCO = "EXTRA_ENABLE_BT_SCO"
+
+        var instance: ReelVoiceForegroundService? = null
+            private set
 
         var isServiceRunning = false
             private set
@@ -52,6 +57,7 @@ class ReelVoiceForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         initVoiceRecognition()
     }
@@ -79,22 +85,61 @@ class ReelVoiceForegroundService : Service() {
                 updateNotification()
             }
             ACTION_UPDATE_SETTINGS -> {
-                val requireWake = intent.getBooleanExtra(EXTRA_REQUIRE_WAKE_WORD, true)
+                val requireWake = intent.getBooleanExtra(EXTRA_REQUIRE_WAKE_WORD, false)
                 val customWord = intent.getStringExtra(EXTRA_CUSTOM_WAKE_WORD)
+                val enableBtSco = intent.getBooleanExtra(EXTRA_ENABLE_BT_SCO, true)
                 voiceManager?.requireWakeWord = requireWake
+                voiceManager?.enableBluetoothSco = enableBtSco
                 if (!customWord.isNullOrBlank()) {
                     voiceManager?.customWakeWord = customWord
                 }
-                Log.d(TAG, "Configuración actualizada: requireWakeWord = $requireWake, customWakeWord = $customWord")
+                Log.d(TAG, "Configuración actualizada: requireWakeWord = $requireWake, customWakeWord = $customWord, btSco = $enableBtSco")
             }
         }
         return START_STICKY
+    }
+
+    /**
+     * Invocado por AccessibilityService cuando cambia la app en primer plano.
+     * Si Smart Sleep está activo, duerme el micrófono fuera de apps de video y lo despierta al entrar.
+     */
+    fun onForegroundAppChanged(packageName: String, isTargetVideoApp: Boolean) {
+        val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
+        val smartSleep = prefs.getBoolean("pref_smart_sleep", true)
+        if (!smartSleep || !isServiceRunning) return
+
+        if (isTargetVideoApp) {
+            if (!isMicActive) {
+                Log.i(TAG, "Smart Sleep: Entrando a app de video ($packageName). Reanudando micrófono...")
+                isMicActive = true
+                voiceManager?.resumeListening()
+                updateNotification()
+                val bubbleIntent = Intent(this, FloatingBubbleService::class.java).apply {
+                    action = FloatingBubbleService.ACTION_UPDATE_STATE
+                    putExtra(FloatingBubbleService.EXTRA_IS_LISTENING, true)
+                }
+                startService(bubbleIntent)
+            }
+        } else {
+            if (isMicActive) {
+                Log.i(TAG, "Smart Sleep: Saliendo de apps de video ($packageName). Pausando micrófono...")
+                isMicActive = false
+                voiceManager?.pauseListening()
+                updateNotification()
+                val bubbleIntent = Intent(this, FloatingBubbleService::class.java).apply {
+                    action = FloatingBubbleService.ACTION_UPDATE_STATE
+                    putExtra(FloatingBubbleService.EXTRA_IS_LISTENING, false)
+                }
+                startService(bubbleIntent)
+            }
+        }
     }
 
     private fun initVoiceRecognition() {
         val prefs = getSharedPreferences("reel_voice_prefs", Context.MODE_PRIVATE)
         val requireWake = prefs.getBoolean("pref_wake_word", false)
         val customWord = prefs.getString("pref_custom_wake_word", "reel") ?: "reel"
+        val enableBtSco = prefs.getBoolean("pref_bt_sco", true)
 
         voiceManager = VoiceRecognitionManager(
             context = this,
@@ -105,6 +150,7 @@ class ReelVoiceForegroundService : Service() {
         ).apply {
             requireWakeWord = requireWake
             customWakeWord = customWord
+            enableBluetoothSco = enableBtSco
         }
     }
 
@@ -116,7 +162,28 @@ class ReelVoiceForegroundService : Service() {
         FloatingBubbleService.updateBubbleCommand(this, command)
         triggerHapticFeedback()
 
-        // 2. Ejecutar gesto a través del servicio de accesibilidad
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+
+        // 2. Ejecutar comandos de control de volumen nativo
+        when (command) {
+            VoiceCommand.VOLUME_UP -> {
+                audioManager?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_RAISE, android.media.AudioManager.FLAG_SHOW_UI)
+                return
+            }
+            VoiceCommand.VOLUME_DOWN -> {
+                audioManager?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_LOWER, android.media.AudioManager.FLAG_SHOW_UI)
+                return
+            }
+            VoiceCommand.MUTE -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager?.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_TOGGLE_MUTE, android.media.AudioManager.FLAG_SHOW_UI)
+                }
+                return
+            }
+            else -> {}
+        }
+
+        // 3. Ejecutar gestos a través del servicio de accesibilidad
         val accessibility = ReelVoiceAccessibilityService.instance
         if (accessibility == null) {
             Log.w(TAG, "El servicio de accesibilidad no está activo. No se pudo despachar el gesto.")
@@ -128,7 +195,9 @@ class ReelVoiceForegroundService : Service() {
             VoiceCommand.PREVIOUS -> accessibility.scrollPrevious()
             VoiceCommand.LIKE -> accessibility.sendLike()
             VoiceCommand.PAUSE -> accessibility.togglePause()
-            VoiceCommand.UNKNOWN -> {}
+            VoiceCommand.COMMENTS -> accessibility.openComments()
+            VoiceCommand.FAVORITE -> accessibility.saveFavorite()
+            else -> {}
         }
     }
 
