@@ -49,44 +49,12 @@ class VoiceRecognitionManager(
 
     private val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-419")
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "es-419")
-        putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("es-419", "es-ES", "es-US", "es-MX", "es-PE", "es-CO", "es-AR"))
+        val defaultLocale = Locale.getDefault().toLanguageTag()
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, defaultLocale)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, defaultLocale)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-        putExtra("android.speech.extra.DICTATION_MODE", true)
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-    }
-
-    private fun setupBluetoothSco(enable: Boolean) {
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            if (enable) {
-                if (audioManager.isBluetoothScoAvailableOffCall) {
-                    audioManager.startBluetoothSco()
-                    audioManager.isBluetoothScoOn = true
-                    Log.i(TAG, "Bluetooth SCO activado para audífonos inalámbricos")
-                }
-            } else {
-                if (audioManager.isBluetoothScoOn) {
-                    audioManager.isBluetoothScoOn = false
-                    audioManager.stopBluetoothSco()
-                    Log.i(TAG, "Bluetooth SCO detenido")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Excepción al configurar Bluetooth SCO: ${e.message}")
-        }
-    }
-
-    private fun configureSpeakerphone(enable: Boolean) {
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            audioManager.isSpeakerphoneOn = enable
-        } catch (e: Exception) {
-            Log.w(TAG, "Excepción al configurar altavoz: ${e.message}")
-        }
     }
 
     private fun muteSystemSounds(mute: Boolean) {
@@ -95,15 +63,12 @@ class VoiceRecognitionManager(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 val direction = if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
                 audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, direction, 0)
-                audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, direction, 0)
             } else {
                 @Suppress("DEPRECATION")
                 audioManager.setStreamMute(AudioManager.STREAM_SYSTEM, mute)
-                @Suppress("DEPRECATION")
-                audioManager.setStreamMute(AudioManager.STREAM_NOTIFICATION, mute)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "No se pudo ajustar volumen para silenciar el beep: ${e.message}")
+            Log.w(TAG, "No se pudo ajustar volumen: ${e.message}")
         }
     }
 
@@ -112,9 +77,6 @@ class VoiceRecognitionManager(
         isRunning = true
         isPausedByUser = false
 
-        setupBluetoothSco(true)
-        configureSpeakerphone(true)
-
         mainHandler.post {
             initAndStartRecognizer()
         }
@@ -122,8 +84,6 @@ class VoiceRecognitionManager(
 
     fun pauseListening() {
         isPausedByUser = true
-        setupBluetoothSco(false)
-        configureSpeakerphone(false)
         stopInternal()
         muteSystemSounds(false)
         onStatusChanged(false, "Micrófono en pausa")
@@ -134,8 +94,6 @@ class VoiceRecognitionManager(
             startListening()
         } else {
             isPausedByUser = false
-            setupBluetoothSco(true)
-            configureSpeakerphone(true)
             mainHandler.post {
                 initAndStartRecognizer()
             }
@@ -145,8 +103,6 @@ class VoiceRecognitionManager(
     fun stopListening() {
         isRunning = false
         isPausedByUser = false
-        setupBluetoothSco(false)
-        configureSpeakerphone(false)
         mainHandler.post {
             stopInternal()
             muteSystemSounds(false)
@@ -164,12 +120,7 @@ class VoiceRecognitionManager(
 
         try {
             if (speechRecognizer == null) {
-                speechRecognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-                    Log.i(TAG, "Usando OnDeviceSpeechRecognizer (Silencioso y local)")
-                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-                } else {
-                    SpeechRecognizer.createSpeechRecognizer(context)
-                }.apply {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                     setRecognitionListener(createRecognitionListener())
                 }
             }
@@ -185,7 +136,6 @@ class VoiceRecognitionManager(
 
     private fun stopInternal() {
         try {
-            muteSystemSounds(false)
             speechRecognizer?.stopListening()
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
@@ -193,6 +143,7 @@ class VoiceRecognitionManager(
             Log.w(TAG, "Excepción al detener SpeechRecognizer: ${e.message}")
         } finally {
             speechRecognizer = null
+            muteSystemSounds(false)
         }
     }
 
@@ -202,15 +153,8 @@ class VoiceRecognitionManager(
         mainHandler.removeCallbacksAndMessages(null)
         mainHandler.postDelayed({
             if (isRunning && !isPausedByUser) {
-                try {
-                    speechRecognizer?.cancel()
-                    muteSystemSounds(true)
-                    speechRecognizer?.startListening(recognizerIntent)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error al reiniciar escucha, recreando recognizer: ${e.message}")
-                    stopInternal()
-                    initAndStartRecognizer()
-                }
+                stopInternal()
+                initAndStartRecognizer()
             }
         }, delayMs)
     }
@@ -220,6 +164,7 @@ class VoiceRecognitionManager(
             override fun onReadyForSpeech(params: Bundle?) {
                 Log.d(TAG, "Listo para escuchar")
                 isCommandExecutedInCurrentSession = false
+                muteSystemSounds(false)
             }
 
             override fun onBeginningOfSpeech() {
@@ -238,14 +183,15 @@ class VoiceRecognitionManager(
             override fun onError(error: Int) {
                 Log.d(TAG, "Código de evento del recognizer: $error")
                 isCommandExecutedInCurrentSession = false
-                // Códigos normales de timeout o no-match reinician la escucha en bucle
-                scheduleRestart(250)
+                muteSystemSounds(true)
+                scheduleRestart(350)
             }
 
             override fun onResults(results: Bundle?) {
                 processMatches(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
                 isCommandExecutedInCurrentSession = false
-                scheduleRestart(150)
+                muteSystemSounds(true)
+                scheduleRestart(200)
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
