@@ -15,3 +15,12 @@
 local.properties
 **/build/
 app/src/main/assets/model-es/
+
+# Built binaries & Keystores
+*.apk
+*.aab
+*.jks
+
+# IDE
+.idea/
+
