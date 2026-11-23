@@ -24,3 +24,8 @@ app/src/main/assets/model-es/
 # IDE
 .idea/
 
+
+local.properties
+app/local.properties
+*.apk
+*.aab
